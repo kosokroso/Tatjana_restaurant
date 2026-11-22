@@ -1,0 +1,8 @@
+# Vse besedilne datoteke z LF, tudi na Windows (core.autocrlf=true bi jih
+# sicer ob checkoutu pretvoril v CRLF). Strežnik je Linux; ena oblika
+# pomeni čiste diffe in nobenih presenečenj v .htaccess ali skriptah za cron.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.webp binary
