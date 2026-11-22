@@ -1,0 +1,7 @@
+config/config.php
+tests/config.test.php
+logs/
+*.log
+.env
+.env.*
+/docker/data/

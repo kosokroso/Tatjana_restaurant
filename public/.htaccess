@@ -1,0 +1,11 @@
+Options -Indexes
+
+# Skrite datoteke (.git, .env, .htaccess) niso nikoli javne.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^api/v1/ api/index.php [L,QSA]
+</IfModule>
