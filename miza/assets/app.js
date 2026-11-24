@@ -1,7 +1,7 @@
 'use strict';
 /* Tatjana Miza · admin aplikacija (brez ogrodij) */
 
-const S = { me: null, view: 'pregled', date: today(), minute: null, day: null, sel: null, selTable: null };
+const S = { me: null, view: 'pregled', date: today(), minute: null, day: null, sel: null, selTable: null, tab: 'list', doneOpen: false };
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -32,11 +32,34 @@ function toast(msg, err = false) {
   const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg;
   document.body.appendChild(t); setTimeout(() => t.remove(), 3200);
 }
+/* Ikone: črtne, 24 px mreža, brez emojijev (na vsaki napravi izgledajo drugače). */
+const ICONS = {
+  pregled: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  rezervacije: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
+  narocila: '<path d="M6 8h12l1 12H5z"/><path d="M9 8a3 3 0 0 1 6 0"/>',
+  tloris: '<rect x="3" y="3" width="8" height="8" rx="1.5"/><circle cx="17.5" cy="6.5" r="3.5"/><rect x="3" y="14" width="8" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  meni: '<path d="M7 3v7M4 3v4a3 3 0 0 0 6 0V3M7 10v11"/><path d="M17 21V3c-2.6 1.1-4 4-4 8h4"/>',
+  nastavitve: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  vec: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
+  odjava: '<path d="M9 4H5v16h4M16 8l4 4-4 4M20 12H9"/>',
+  levo: '<path d="M15 6l-6 6 6 6"/>', desno: '<path d="M9 6l6 6-6 6"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  opomba: '<path d="M5 4h10l4 4v12H5z"/><path d="M9 13h6M9 17h4"/>',
+  telefon: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
+  zvok: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  zvokOff: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4M4 4l16 16"/>',
+};
+const ic = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+/* Znak: miza z štirimi stoli. */
+const LOGO = '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="16" cy="16" r="6.5"/><path d="M16 3.5v3M16 25.5v3M3.5 16h3M25.5 16h3"/></svg>';
+
 function modal(title, body, foot = '') {
   const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal"><div class="mh"><h2>${esc(title)}</h2><button class="btn ghost" data-x>✕</button></div><div class="mb">${body}</div>${foot ? `<div class="mf">${foot}</div>` : ''}</div>`;
+  bg.innerHTML = `<div class="modal" role="dialog" aria-label="${esc(title)}"><div class="mh"><h2>${esc(title)}</h2><button class="ib ghost" data-x aria-label="Zapri">${ic('x')}</button></div><div class="mb">${body}</div>${foot ? `<div class="mf">${foot}</div>` : ''}</div>`;
   document.body.appendChild(bg);
-  const close = () => bg.remove();
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const close = () => { document.removeEventListener('keydown', onKey); bg.remove(); };
+  document.addEventListener('keydown', onKey);
   bg.addEventListener('mousedown', e => { if (e.target === bg) close(); });
   $('[data-x]', bg).onclick = close;
   return { el: bg, close };
@@ -50,11 +73,12 @@ async function boot() {
 }
 function renderLogin() {
   stopPolling();
-  $('#app').innerHTML = `<div class="auth-wrap"><form class="card auth-card" id="lf">
-    <h1>Tatjana <span>Miza</span></h1><p class="muted">Rezervacije in prevzemi z AI asistentko</p>
+  $('#app').innerHTML = `<div class="auth-wrap"><form class="auth" id="lf">
+    <div class="logo">${LOGO}</div>
+    <h1>Tatjana Miza</h1><p class="muted">Rezervacije in prevzemi z AI asistentko</p>
     <div id="lerr"></div>
-    <label>E-naslov<input name="email" type="email" required autofocus></label>
-    <label>Geslo<input name="password" type="password" required></label>
+    <label>E-naslov<input name="email" type="email" required autofocus autocomplete="username"></label>
+    <label>Geslo<input name="password" type="password" required autocomplete="current-password"></label>
     <button class="btn primary">Prijava</button></form></div>`;
   $('#lf').onsubmit = async e => {
     e.preventDefault();
@@ -62,19 +86,31 @@ function renderLogin() {
     catch (err) { $('#lerr').innerHTML = `<div class="alert">${esc(err.message)}</div>`; }
   };
 }
+/* [ključ, kratka oznaka, polno ime, v spodnji vrstici na telefonu] */
 const NAV = [
-  ['pregled', 'Pregled dneva', '◷'], ['rezervacije', 'Rezervacije', '☰'], ['narocila', 'Naročila za prevzem', '🛍'],
-  ['tloris', 'Tloris miz', '▦'], ['meni', 'Meni', '🍽'], ['nastavitve', 'Nastavitve', '⚙'],
+  ['pregled', 'Dan', 'Pregled dneva', 1], ['rezervacije', 'Rezervacije', 'Rezervacije', 1], ['narocila', 'Naročila', 'Naročila za prevzem', 1],
+  ['tloris', 'Tloris', 'Tloris miz', 0], ['meni', 'Meni', 'Meni', 0], ['nastavitve', 'Nastavitve', 'Nastavitve', 0],
 ];
+async function doLogout() { await api('auth/logout'); location.hash = ''; renderLogin(); }
 function shell() {
   if (!$('.shell')) {
-    $('#app').innerHTML = `<div class="shell"><nav class="side"><h1>Tatjana <span>Miza</span></h1>
-      ${NAV.map(([k, t, i]) => `<a href="#${k}" data-nav="${k}"><span>${i}</span>${t}${k === 'narocila' ? '<span class="badge" id="obadge" hidden></span>' : ''}</a>`).join('')}
-      <div class="foot"><b>${esc(S.me.restaurant.name)}</b>${esc(S.me.user.email)}<br><a href="#" id="logout" style="padding:6px 0;color:#cfc7bd">Odjava</a></div>
-    </nav><main class="main" id="main"></main></div>`;
-    $('#logout').onclick = async e => { e.preventDefault(); await api('auth/logout'); location.hash = ''; renderLogin(); };
+    $('#app').innerHTML = `<div class="shell"><nav class="rail" aria-label="Glavna navigacija"><div class="brand" title="${esc(S.me.restaurant.name)}">${LOGO}</div>
+      ${NAV.map(([k, t, , main]) => `<a class="ni ${main ? '' : 'alt'}" href="#${k}" data-nav="${k}">${ic(k)}<span>${t}</span>${k === 'narocila' ? '<span class="badge" id="obadge" hidden></span>' : ''}</a>`).join('')}
+      <button class="ni more" id="morebtn" aria-label="Več">${ic('vec')}<span>Več</span></button>
+      <div class="rail-foot"><button class="ni" id="logout" title="${esc(S.me.user.email)}">${ic('odjava')}<span>Odjava</span></button></div>
+    </nav>
+    <div class="more-sheet" id="more" hidden>${NAV.filter(n => !n[3]).map(([k, , t]) => `<a href="#${k}" data-nav="${k}">${ic(k)}${t}</a>`).join('')}
+      <button id="logout2">${ic('odjava')}Odjava<small>${esc(S.me.user.email)}</small></button></div>
+    <main class="main" id="main"></main></div>`;
+    $('#logout').onclick = doLogout; $('#logout2').onclick = doLogout;
+    $('#morebtn').onclick = e => { e.stopPropagation(); $('#more').hidden = !$('#more').hidden; };
+    document.addEventListener('click', e => { const m = $('#more'); if (m && !m.hidden && !e.target.closest('#more')) m.hidden = true; });
+    document.addEventListener('keydown', e => { const m = $('#more'); if (e.key === 'Escape' && m) m.hidden = true; });
+    window.addEventListener('resize', debounce(() => { if (S.view === 'pregled' && S.day && $('#plan')) drawPlan(); }, 150));
   }
   $$('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === S.view));
+  $('#morebtn')?.classList.toggle('on', !NAV.find(n => n[0] === S.view)[3]);
+  const mo = $('#more'); if (mo) mo.hidden = true;
   return $('#main');
 }
 function route() {
@@ -116,21 +152,37 @@ function tableHTML(t, extra = '', sub = '') {
 /* ---------------- pregled dneva ---------------- */
 async function viewDay() {
   const m = shell();
-  m.innerHTML = `<div class="top"><h2 class="grow">Pregled dneva</h2>
-    <div class="datenav"><button class="btn" id="dprev">‹</button><input type="date" id="ddate" value="${S.date}"><button class="btn" id="dnext">›</button><button class="btn" id="dtoday">Danes</button></div>
-    <button class="btn primary" id="newres">+ Nova rezervacija</button></div>
+  m.innerHTML = `<div class="phead"><div class="grow"><div class="over">${esc(S.me.restaurant.name)}</div>
+      <div class="dnav"><button class="ib" id="dprev" aria-label="Prejšnji dan">${ic('levo')}</button><h1 class="ptitle">${dateLabel(S.date)}</h1><button class="ib" id="dnext" aria-label="Naslednji dan">${ic('desno')}</button></div></div>
+    <div class="dctl"><input type="date" id="ddate" value="${S.date}" aria-label="Datum"><button class="btn" id="dtoday">Danes</button>
+    <button class="btn primary fab" id="newres" aria-label="Nova rezervacija">${ic('plus')}<span class="lbl">Nova rezervacija</span></button></div></div>
+    <div class="statline" id="stat"></div>
     <div class="alert" id="stale" hidden></div>
-    <div class="day"><div><div class="card plan-wrap"><div id="plan"></div>
-      <div class="slider"><span class="muted small">Čas</span><input type="range" id="tslider" step="15"><b id="tlabel"></b>${S.date === today() ? '<button class="btn sm" id="tnow">Zdaj</button>' : ''}</div>
-      <div class="legend"><span><i style="background:var(--free);border-color:var(--free-b)"></i>Prosto</span><span><i style="background:var(--res);border-color:var(--res-b)"></i>Rezervirano</span><span><i style="background:var(--seat);border-color:var(--seat-b)"></i>Gostje za mizo</span><span><i style="background:var(--off);border-color:var(--off-b)"></i>Ni za rezervacije</span></div>
-    </div><div class="card tl pad" id="timeline"></div></div>
-    <div class="card list" id="rlist"></div></div>`;
-  $('#ddate').onchange = e => { S.date = e.target.value; S.minute = null; loadDay(); };
+    <div class="seg" id="dtabs" role="tablist"><button data-tab="list">Seznam</button><button data-tab="plan">Mize</button><button data-tab="time">Časovnica</button></div>
+    <div class="day" data-tab="${S.tab}"><div class="dcol">
+      <section class="panel plan-wrap pane pane-plan"><div id="plan"></div>
+        <div class="slider"><span class="muted small">Čas</span><input type="range" id="tslider" step="15" aria-label="Čas na tlorisu"><b id="tlabel"></b>${S.date === today() ? '<button class="btn sm" id="tnow">Zdaj</button>' : ''}</div>
+        <div class="legend"><span><i></i>Prosto</span><span><i class="s-soon"></i>Kmalu rezervirano</span><span><i class="s-res"></i>Rezervirano</span><span><i class="s-seated"></i>Gostje za mizo</span><span><i class="s-off"></i>Ni za rezervacije</span></div>
+      </section>
+      <section class="panel tl pane pane-time" id="timeline"></section></div>
+      <section class="panel list pane pane-list" id="rlist"></section></div>`;
+  $('#ddate').onchange = e => { if (!e.target.value) return; S.date = e.target.value; S.minute = null; viewDay(); };
   $('#dprev').onclick = () => { S.date = addDays(S.date, -1); S.minute = null; viewDay(); };
   $('#dnext').onclick = () => { S.date = addDays(S.date, 1); S.minute = null; viewDay(); };
   $('#dtoday').onclick = () => { S.date = today(); S.minute = null; viewDay(); };
   $('#newres').onclick = () => resModal({ date: S.date, time: S.minute != null ? fromMin(S.minute) : '19:00' });
+  $$('#dtabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; syncTabs(); if (S.tab === 'plan' && S.day) drawPlan(); });
+  syncTabs();
+  // Tloris se prilagodi širini, ko se spremeni (drsnik strani, vrtenje tablice, zavihek).
+  if (window.ResizeObserver) {
+    let lastW = 0;
+    new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w && w !== lastW) { lastW = w; if (S.day && S.view === 'pregled') drawPlan(); } }).observe($('#plan'));
+  }
   await loadDay();
+}
+function syncTabs() {
+  $('.day')?.setAttribute('data-tab', S.tab);
+  $$('#dtabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
 }
 async function loadDay() {
   S.day = await api('day', { date: S.date });
@@ -152,17 +204,27 @@ function drawPlan() {
   const tables = S.day.tables, [w, h] = planSize(tables);
   $('#tlabel').textContent = fromMin(S.minute);
   const highlight = S.sel ? S.day.reservations.find(r => r.id === S.sel)?.tables.map(t => +t.id) || [] : [];
-  $('#plan').innerHTML = `<div class="plan" style="width:${w}px;height:${h}px">${tables.map(t => {
+  // Tloris se prilagodi širini zaslona (najmanj 55 %), da ni vodoravnega drsenja.
+  const avail = $('#plan').clientWidth, s = avail > 0 ? Math.max(.55, Math.min(1, avail / w)) : 1;
+  const grid = [...tables].sort((a, b) => String(a.name).localeCompare(String(b.name), 'sl', { numeric: true }));
+  $('#plan').innerHTML = `<div class="plan-fit" style="width:${Math.round(w * s)}px;height:${Math.round(h * s)}px"><div class="plan" style="width:${w}px;height:${h}px;transform:scale(${s})">${tables.map(t => {
     const st = tableState(t, S.minute);
     return tableHTML(t, st.cls + (highlight.includes(+t.id) ? ' sel' : ''), st.sub);
-  }).join('')}</div>`;
-  $$('#plan .tbl').forEach(el => el.onclick = () => {
-    const t = tables.find(x => +x.id === +el.dataset.tid);
-    const st = tableState(t, S.minute);
-    const r = st.res || st.next;
-    if (r) { S.sel = r.id; drawPlan(); drawList(); scrollToRes(r.id); }
-    else resModal({ date: S.date, time: fromMin(S.minute), party_size: Math.min(2, t.max_seats), table_ids: [t.id], zone_pref: t.zone });
-  });
+  }).join('')}</div></div>
+    <div class="tgrid">${grid.map(t => {
+      const st = tableState(t, S.minute), off = !+t.reservable;
+      return `<button class="chip ${off ? 'off' : st.cls} ${highlight.includes(+t.id) ? 'sel' : ''}" data-tid="${t.id}"><b>${esc(t.name)}</b><span class="sub">${off ? 'Ni za rezervacije' : st.sub || 'Prosto'}</span><i>${t.min_seats}–${t.max_seats} oseb</i></button>`;
+    }).join('')}</div>`;
+  $$('#plan [data-tid]').forEach(el => el.onclick = () => tableTap(el.dataset.tid));
+}
+function tableTap(tid) {
+  const t = S.day.tables.find(x => +x.id === +tid);
+  const st = tableState(t, S.minute), r = st.res || st.next;
+  if (r) {
+    S.sel = r.id;
+    if (S.tab !== 'list' && matchMedia('(max-width:1180px)').matches) { S.tab = 'list'; syncTabs(); }
+    drawPlan(); drawList(); scrollToRes(r.id);
+  } else resModal({ date: S.date, time: fromMin(S.minute), party_size: Math.min(2, t.max_seats), table_ids: [t.id], zone_pref: t.zone });
 }
 /* Samodejno osveževanje pregleda dneva.
    Rezervacijo, ki jo Tatjana naredi med klicem, mora osebje videti brez
@@ -213,32 +275,63 @@ function drawTimeline() {
   $('#timeline').innerHTML = `<h3 style="margin-bottom:8px">Časovnica miz</h3><table><tr><th></th><td><div class="lane hours">${hours.map(m => `<span style="left:${pct(m)}">${fromMin(m)}</span>`).join('')}</div></td></tr>${rows}</table>`;
   $$('#timeline .blk').forEach(b => b.onclick = () => { const r = S.day.reservations.find(x => x.id === +b.dataset.rid); resModal(r); });
 }
-function resItem(r) {
+/* Seznam rezervacij je razdeljen po tem, kaj mora natakar narediti zdaj (danes):
+   zamuja, prihaja v 60 min, za mizo, kasneje; zaključeno je zloženo. */
+const DONE = ['completed', 'no_show', 'cancelled'];
+function resItem(r, nm = null) {
   const acts = [];
-  if (r.status === 'confirmed') acts.push(['seated', 'Prišli'], ['no_show', 'Ni prišel']);
-  if (r.status === 'seated') acts.push(['completed', 'Odšli']);
-  if (['confirmed', 'seated'].includes(r.status)) acts.push(['edit', 'Uredi'], ['cancelled', 'Prekliči']);
-  if (['completed', 'no_show', 'cancelled'].includes(r.status)) acts.push(['confirmed', 'Obnovi']);
-  return `<div class="ritem ${r.status} ${S.sel === r.id ? 'sel' : ''}" data-rid="${r.id}">
-    <div class="row"><span class="t">${timeOf(r.start_at)}</span><b>${esc(r.name)}</b><span class="muted">${r.party_size} os.</span><span style="margin-left:auto" class="pill ${r.status}">${ST_RES[r.status]}</span></div>
-    <div class="meta">Miza ${r.tables.map(t => esc(t.name)).join(' + ') || '?'} ${r.phone ? '· ' + esc(r.phone) : ''} <span class="pill ${r.source}">${SRC[r.source] || r.source}</span></div>
-    ${r.notes ? `<div class="meta">📝 ${esc(r.notes)}</div>` : ''}
-    <div class="acts">${acts.map(([k, l]) => `<button class="btn sm ${k === 'cancelled' ? 'danger' : ''}" data-act="${k}">${l}</button>`).join('')}</div></div>`;
+  if (r.status === 'confirmed') acts.push(['seated', 'Prišli', 1], ['no_show', 'Ni prišel']);
+  if (r.status === 'seated') acts.push(['completed', 'Odšli', 1]);
+  if (['confirmed', 'seated'].includes(r.status)) acts.push(['edit', 'Uredi']); // preklic je v oknu Uredi, da ga ni mogoče sprožiti z naključnim dotikom
+  if (DONE.includes(r.status)) acts.push(['confirmed', 'Obnovi']);
+  const late = nm != null && r.status === 'confirmed' ? nm - minOf(r.start_at, S.date) : 0;
+  const tel = r.phone ? String(r.phone).replace(/[^\d+]/g, '') : '';
+  return `<div class="ritem ${r.status} ${late > 10 ? 'late' : ''} ${S.sel === r.id ? 'sel' : ''}" data-rid="${r.id}">
+    <div class="rtime">${timeOf(r.start_at)}</div>
+    <div class="rbody">
+      <div class="rline"><span class="rname">${esc(r.name)}</span><span class="rparty">${r.party_size} os.</span>${r.tables.length ? `<span class="tchip">${r.tables.map(t => esc(t.name)).join(' + ')}</span>` : ''}</div>
+      <div class="meta">${late > 10 ? `<span class="late-tag">zamuja ${late} min</span>` : ''}${DONE.includes(r.status) ? `<span class="pill ${r.status}">${ST_RES[r.status]}</span>` : ''}${r.source === 'tatjana' ? '<span class="pill tatjana">Tatjana</span>' : ''}${r.phone ? `<a href="tel:${esc(tel)}">${ic('telefon')} ${esc(r.phone)}</a>` : ''}</div>
+      ${r.notes ? `<div class="meta note">${ic('opomba')}<span>${esc(r.notes)}</span></div>` : ''}
+      <div class="acts">${acts.map(([k, l, p]) => `<button class="btn sm ${p ? 'primary' : ''} ${k === 'cancelled' ? 'danger' : ''}" data-act="${k}">${l}</button>`).join('')}</div>
+    </div></div>`;
 }
 function drawList() {
-  const rs = S.day.reservations, active = rs.filter(r => ['confirmed', 'seated'].includes(r.status));
+  const rs = [...S.day.reservations].sort((a, b) => a.start_at.localeCompare(b.start_at));
+  const active = rs.filter(r => ['confirmed', 'seated'].includes(r.status));
   const guests = active.reduce((s, r) => s + r.party_size, 0);
   const ords = S.day.orders.filter(o => o.status !== 'cancelled');
-  $('#rlist').innerHTML = `<div class="sec">${dateLabel(S.date)} · ${active.length} rezervacij · ${guests} gostov</div>
-    ${rs.length ? rs.map(resItem).join('') : '<div class="empty">Ni rezervacij za ta dan.</div>'}
-    <div class="sec">Prevzemi · ${ords.length}</div>
-    ${ords.length ? ords.map(o => `<div class="ritem" onclick="location.hash='narocila'"><div class="row"><span class="t">${timeOf(o.pickup_at)}</span><b>${esc(o.name)}</b><span class="muted">#${esc(o.code)}</span><span style="margin-left:auto" class="pill">${ST_ORD[o.status]}</span></div><div class="meta">${o.items.map(i => i.qty + '× ' + esc(i.name)).join(', ')}</div></div>`).join('') : '<div class="empty">Ni naročil.</div>'}`;
+  const isToday = S.date === today(), nm = isToday ? nowMin() : null;
+  const g = { late: [], soon: [], seated: [], later: [], done: [] };
+  rs.forEach(r => {
+    if (DONE.includes(r.status)) return g.done.push(r);
+    if (r.status === 'seated') return g.seated.push(r);
+    if (!isToday) return g.later.push(r);
+    const d = minOf(r.start_at, S.date) - nm;
+    (d < -10 ? g.late : d <= 60 ? g.soon : g.later).push(r);
+  });
+  const sec = (t, n, cls = '') => `<div class="sec ${cls}"><span>${t}</span><span class="n">${n}</span></div>`;
+  const rows = l => l.map(r => resItem(r, nm)).join('');
+  let h = '';
+  if (isToday) {
+    if (g.late.length) h += sec('Zamuja', g.late.length, 'bad') + rows(g.late);
+    h += sec('Prihaja v 60 min', g.soon.length) + (g.soon.length ? rows(g.soon) : '<div class="quiet">Naslednjih 60 minut ni prihodov.</div>');
+  }
+  if (g.seated.length) h += sec('Za mizo', g.seated.length) + rows(g.seated);
+  if (g.later.length) h += sec(isToday ? 'Kasneje' : 'Rezervacije', g.later.length) + rows(g.later);
+  if (!active.length && !g.done.length) h = '<div class="empty">Ni rezervacij za ta dan.</div>';
+  if (g.done.length) h += `<details class="done" ${S.doneOpen ? 'open' : ''}><summary class="sec"><span>Zaključeno in preklicano</span><span class="n">${g.done.length}</span></summary>${rows(g.done)}</details>`;
+  if (ords.length) h += sec('Prevzemi', ords.length) + ords.map(o => `<div class="ritem" onclick="location.hash='narocila'"><div class="rtime">${timeOf(o.pickup_at)}</div><div class="rbody"><div class="rline"><span class="rname">${esc(o.name)}</span><span class="rparty">#${esc(o.code)}</span><span class="pill" style="margin-left:auto">${ST_ORD[o.status]}</span></div><div class="meta">${o.items.map(i => i.qty + '× ' + esc(i.name)).join(', ')}</div></div></div>`).join('');
+  $('#rlist').innerHTML = h;
+  $('#stat').innerHTML = `<span><b>${active.length}</b> rezervacij</span><span><b>${guests}</b> gostov</span>${isToday ? `<span><b>${g.seated.length}</b> za mizo</span>` : ''}${ords.length ? `<span><b>${ords.length}</b> prevzemov</span>` : ''}`;
+  $('#rlist details.done')?.addEventListener('toggle', e => { S.doneOpen = e.target.open; });
   $$('#rlist .ritem[data-rid]').forEach(el => {
     const r = rs.find(x => x.id === +el.dataset.rid);
     el.onclick = e => {
-      const act = e.target.dataset.act;
-      if (!act) { S.sel = S.sel === r.id ? null : r.id; if (S.sel) S.minute = Math.max(S.range[0], minOf(r.start_at, S.date)); $('#tslider').value = S.minute; drawPlan(); drawList(); return; }
+      const btn = e.target.closest('[data-act]');
+      if (e.target.closest('a')) return;
+      if (!btn) { S.sel = S.sel === r.id ? null : r.id; if (S.sel) S.minute = Math.max(S.range[0], minOf(r.start_at, S.date)); $('#tslider').value = S.minute; drawPlan(); drawList(); return; }
       e.stopPropagation();
+      const act = btn.dataset.act;
       if (act === 'edit') return resModal(r);
       if (act === 'cancelled' && !confirm(`Prekličem rezervacijo ${r.name}?`)) return;
       setResStatus(r.id, act);
@@ -324,12 +417,12 @@ async function viewList() {
   m.innerHTML = `<div class="top"><h2 class="grow">Rezervacije</h2>
     <label>Od<input type="date" id="lfrom" value="${S.lf.from}"></label><label>Do<input type="date" id="lto" value="${S.lf.to}"></label>
     <label>Iskanje<input id="lq" placeholder="ime, telefon, koda" value="${esc(S.lf.q)}"></label>
-    <button class="btn primary" id="newres" style="align-self:flex-end">+ Nova</button></div><div class="card" id="ltbl"><div class="empty">Nalagam…</div></div>`;
+    <button class="btn primary fab" id="newres" style="align-self:flex-end" aria-label="Nova rezervacija">${ic('plus')}<span class="lbl">Nova</span></button></div><div class="card" id="ltbl"><div class="empty">Nalagam…</div></div>`;
   const load = async () => {
     const j = await api('reservations/list', S.lf);
     const rs = j.reservations;
-    $('#ltbl').innerHTML = rs.length ? `<table class="simple"><tr><th>Datum</th><th>Ura</th><th>Ime</th><th>Osebe</th><th>Miza</th><th>Telefon</th><th>Vir</th><th>Status</th><th>Koda</th></tr>
-      ${rs.map(r => `<tr data-rid="${r.id}" style="cursor:pointer"><td>${dateLabel(r.start_at.slice(0, 10))}</td><td><b>${timeOf(r.start_at)}</b></td><td>${esc(r.name)}${r.notes ? ' <span title="' + esc(r.notes) + '">📝</span>' : ''}</td><td>${r.party_size}</td><td>${r.tables.map(t => esc(t.name)).join(' + ')}</td><td>${esc(r.phone || '')}</td><td><span class="pill ${r.source}">${SRC[r.source] || r.source}</span></td><td><span class="pill ${r.status}">${ST_RES[r.status]}</span></td><td class="muted">${esc(r.code)}</td></tr>`).join('')}</table>`
+    $('#ltbl').innerHTML = rs.length ? `<table class="simple resp"><thead><tr><th>Datum</th><th>Ura</th><th>Ime</th><th>Osebe</th><th>Miza</th><th>Telefon</th><th>Vir</th><th>Status</th><th>Koda</th></tr></thead><tbody>
+      ${rs.map(r => `<tr data-rid="${r.id}"><td class="c-date">${dateLabel(r.start_at.slice(0, 10))}</td><td class="c-time">${timeOf(r.start_at)}</td><td class="c-name">${esc(r.name)}${r.notes ? ` <span title="${esc(r.notes)}" style="color:var(--muted)">${ic('opomba')}</span>` : ''}</td><td class="c-party">${r.party_size}<span class="muted small"> os.</span></td><td class="c-table">${r.tables.map(t => esc(t.name)).join(' + ')}</td><td class="c-phone">${esc(r.phone || '')}</td><td class="c-src"><span class="pill ${r.source}">${SRC[r.source] || r.source}</span></td><td class="c-status"><span class="pill ${r.status}">${ST_RES[r.status]}</span></td><td class="c-code muted">${esc(r.code)}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">Ni rezervacij v tem obdobju.</div>';
     $$('#ltbl tr[data-rid]').forEach(tr => tr.onclick = async () => { await ensureTables(); resModal(rs.find(r => r.id === +tr.dataset.rid)); });
   };
@@ -454,6 +547,7 @@ function startBadgePoll() {
   tick(); badgeT = setInterval(tick, 15000);
 }
 let actx = null;
+const soundLabel = () => actx ? ic('zvok') + 'Zvok vklopljen' : ic('zvokOff') + 'Vklopi zvok';
 function beep() {
   if (!actx) return;
   [0, .18].forEach(d => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.setValueAtTime(.25, actx.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + d + .15); o.start(actx.currentTime + d); o.stop(actx.currentTime + d + .16); });
@@ -462,12 +556,12 @@ async function viewOrders() {
   const m = shell();
   S.odate = S.odate || today();
   m.innerHTML = `<div class="top"><h2 class="grow">Naročila za prevzem</h2>
-    <div class="datenav"><button class="btn" id="oprev">‹</button><input type="date" id="odate" value="${S.odate}"><button class="btn" id="onext">›</button></div>
-    <button class="btn" id="sound">${actx ? '🔔 Zvok vklopljen' : '🔕 Vklopi zvok'}</button><button class="btn primary" id="neword">+ Novo naročilo</button></div><div id="kb"></div>`;
+    <div class="datenav"><button class="ib" id="oprev" aria-label="Prejšnji dan">${ic('levo')}</button><input type="date" id="odate" value="${S.odate}"><button class="ib" id="onext" aria-label="Naslednji dan">${ic('desno')}</button></div>
+    <button class="btn" id="sound">${soundLabel()}</button><button class="btn primary" id="neword">${ic('plus')}Novo naročilo</button></div><div id="kb"></div>`;
   $('#odate').onchange = e => { S.odate = e.target.value; load(); };
   $('#oprev').onclick = () => { S.odate = addDays(S.odate, -1); viewOrders(); };
   $('#onext').onclick = () => { S.odate = addDays(S.odate, 1); viewOrders(); };
-  $('#sound').onclick = e => { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); beep(); e.target.textContent = '🔔 Zvok vklopljen'; };
+  $('#sound').onclick = e => { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); beep(); e.currentTarget.innerHTML = soundLabel(); };
   $('#neword').onclick = orderModal;
   const seen = new Set(S.seenOrders || []);
   const load = async () => {
@@ -523,7 +617,7 @@ async function orderModal() {
   const lineCents = l => (l.it.price_cents + l.it.option_groups.flatMap(g => g.options).filter(o => l.opts.has(+o.id)).reduce((s, o) => s + +o.price_cents, 0)) * l.qty;
   const drawCart = () => {
     $('#cart', md.el).innerHTML = cart.map((l, idx) => `<div class="og" data-i="${idx}"><div class="row"><b style="flex:1">${esc(l.it.name)}</b>
-      <div class="qty"><button data-q="-1">−</button><b>${l.qty}</b><button data-q="1">+</button></div><span class="price">${eur(lineCents(l))}</span><button class="btn sm ghost danger" data-rm>✕</button></div>
+      <div class="qty"><button data-q="-1">−</button><b>${l.qty}</b><button data-q="1">+</button></div><span class="price">${eur(lineCents(l))}</span><button class="btn sm ghost danger" data-rm>${ic('x')}</button></div>
       ${l.it.option_groups.map(g => `<div class="small"><b>${esc(g.name)}</b>${+g.required ? ' (obvezno)' : ''}${+g.max_select > 1 ? ` · največ ${g.max_select}` : ''}<div class="row">${g.options.map(o => `<label class="check"><input type="${+g.max_select === 1 ? 'radio' : 'checkbox'}" name="g${idx}_${g.id}" value="${o.id}" ${l.opts.has(+o.id) ? 'checked' : ''}> ${esc(o.name)}${+o.price_cents ? ' +' + eur(o.price_cents) : ''}</label>`).join('')}</div></div>`).join('')}
       <input placeholder="Opomba k jedi" data-n value="${esc(l.notes)}"></div>`).join('') || '<div class="muted small">Košarica je prazna.</div>';
     $$('#cart .og', md.el).forEach(el => {
@@ -590,7 +684,7 @@ function itemModal(i) {
     `${i.id ? '<button class="btn danger" data-del style="margin-right:auto">Izbriši jed</button>' : ''}<button class="btn primary" data-save>Shrani</button>`);
   const drawG = () => {
     $('#groups', md.el).innerHTML = groups.map((g, gi) => `<div class="og" data-g="${gi}"><div class="grid3"><input data-gf="name" placeholder="npr. Velikost" value="${esc(g.name)}"><label class="check"><input type="checkbox" data-gf="required" ${+g.required ? 'checked' : ''}> Obvezno</label><label class="check">Največ <input type="number" min="1" style="width:60px" data-gf="max_select" value="${g.max_select || 1}"></label></div>
-      ${(g.options || []).map((o, oi) => `<div class="opt" data-o="${oi}"><input data-of="name" placeholder="Možnost" value="${esc(o.name)}"><input data-of="price_eur" placeholder="+ €" value="${o.price_eur ?? (o.price_cents ? (o.price_cents / 100).toFixed(2).replace('.', ',') : '')}"><button class="btn sm ghost danger" data-orm>✕</button></div>`).join('')}
+      ${(g.options || []).map((o, oi) => `<div class="opt" data-o="${oi}"><input data-of="name" placeholder="Možnost" value="${esc(o.name)}"><input data-of="price_eur" placeholder="+ €" value="${o.price_eur ?? (o.price_cents ? (o.price_cents / 100).toFixed(2).replace('.', ',') : '')}"><button class="btn sm ghost danger" data-orm>${ic('x')}</button></div>`).join('')}
       <div class="row"><button class="btn sm" data-oadd>+ Možnost</button><button class="btn sm ghost danger" data-grm>Odstrani skupino</button></div></div>`).join('') || '<div class="muted small">Npr. velikost pice, pečenost, dodatki z doplačilom.</div>';
     $$('[data-g]', md.el).forEach(el => {
       const g = groups[+el.dataset.g];
@@ -668,9 +762,9 @@ async function viewSettings() {
   };
 }
 function intHTML(kind, h) {
-  return `<div class="int row" data-kind="${kind}" style="margin:3px 0"><input type="time" data-k="open" value="${h.open_time}" style="width:110px"> do <input type="time" data-k="close" value="${h.close_time}" style="width:110px">${kind === 'dine' ? ` <span class="small muted">zadnja</span> <input type="time" data-k="last" value="${h.last_booking || ''}" style="width:110px">` : ''}<button class="btn sm ghost danger" data-rmint>✕</button></div>`;
+  return `<div class="int row" data-kind="${kind}" style="margin:3px 0"><input type="time" data-k="open" value="${h.open_time}" style="width:110px"> do <input type="time" data-k="close" value="${h.close_time}" style="width:110px">${kind === 'dine' ? ` <span class="small muted">zadnja</span> <input type="time" data-k="last" value="${h.last_booking || ''}" style="width:110px">` : ''}<button class="btn sm ghost danger" data-rmint>${ic('x')}</button></div>`;
 }
-function durRow(d) { return `<tr data-dur><td><input type="number" data-k="max_party" value="${d.max_party}" style="width:90px"></td><td><input type="number" data-k="minutes" step="15" value="${d.minutes}" style="width:90px"></td><td><button class="btn sm ghost danger" data-rmrow>✕</button></td></tr>`; }
-function spRow(d) { return `<tr data-sp><td><input type="date" data-k="day" value="${d.day}"></td><td><input type="checkbox" data-k="closed" ${+d.closed ? 'checked' : ''}></td><td><input data-k="note" value="${esc(d.note || '')}" placeholder="npr. božič"></td><td><button class="btn sm ghost danger" data-rmrow>✕</button></td></tr>`; }
+function durRow(d) { return `<tr data-dur><td><input type="number" data-k="max_party" value="${d.max_party}" style="width:90px"></td><td><input type="number" data-k="minutes" step="15" value="${d.minutes}" style="width:90px"></td><td><button class="btn sm ghost danger" data-rmrow>${ic('x')}</button></td></tr>`; }
+function spRow(d) { return `<tr data-sp><td><input type="date" data-k="day" value="${d.day}"></td><td><input type="checkbox" data-k="closed" ${+d.closed ? 'checked' : ''}></td><td><input data-k="note" value="${esc(d.note || '')}" placeholder="npr. božič"></td><td><button class="btn sm ghost danger" data-rmrow>${ic('x')}</button></td></tr>`; }
 
 boot();

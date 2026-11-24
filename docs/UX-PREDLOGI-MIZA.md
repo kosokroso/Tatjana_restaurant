@@ -21,6 +21,15 @@ Portal je zdaj narejen za tretjega (namizje, veliko podatkov naenkrat). Prva dva
 
 ## Predlogi
 
+## Narejeno 24. 11. 2026 (zvečer): nova podoba + P0-1 + P0-3 + del P0-4
+
+Lokalno preizkušeno na 1440, 1024 in 390 px; čaka na deploy.
+- **Podoba:** nova zasnova "rezervacijska knjiga". IBM Plex Sans in Mono (časi in kode v monospace), ena barva znamke (globoka zelena), jantar za rezervirano, rdeča samo za zamudo. Brez emojijev (črtne SVG ikone), brez senc in zaobljenih kartic. Prosta miza je tiha (bela), zasedena glasna (polna zelena).
+- **P0-1:** navpična tirnica na tablici, spodnja vrstica (Dan, Rezervacije, Naročila, Več) na telefonu, obrazci čez cel zaslon, plavajoči gumb "+" za novo rezervacijo, pod 1180 px zavihki Seznam / Mize / Časovnica, pod 700 px mreža miz namesto tlorisa, tabela rezervacij kot kartice.
+- **P0-3:** seznam dneva po skupinah: Zamuja, Prihaja v 60 min, Za mizo, Kasneje, Zaključeno (zloženo). Statistika dneva v eni vrstici.
+- **P0-4 (del):** rezervacija brez "Prišli" po 10 min dobi oznako "zamuja N min" in klic z enim dotikom. Predlog "Ni prišel" po 30 min še ni narejen.
+- "Prekliči" ni več gumb v vrstici (je v oknu Uredi), da ga ni mogoče sprožiti z naključnim dotikom.
+
 ### P0: pred pilotom (brez tega osebje portala ne bo uporabljalo)
 
 1. **Telefon in tablica.** Obrazec "Nova rezervacija" se na telefonu odpre napol izven zaslona; meni zgoraj zasede tretjino zaslona; tabela rezervacij se ne prilega (vodoravno drsenje); tloris je pomanjšan do neberljivosti. Predlog: na zaslonih pod 900 px namesto tlorisa seznam **"Prihodi"** (velike vrstice, en dotik = Prišli), meni kot spodnja vrstica z 4 ikonami, obrazec čez cel zaslon.
