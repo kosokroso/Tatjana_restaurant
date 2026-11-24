@@ -1,0 +1,15 @@
+---
+# Deploy iz cPanel Git: Update from Remote, nato Deploy HEAD Commit.
+# Na strežnik gre SAMO mapa miza/ (aplikacija na kreativnisplet.si/miza/).
+# src/, sql/, tests/ in docs/ ostanejo v gitu.
+#
+# Brez --delete: datoteke, ki obstajajo samo na strežniku (config.php z geslom
+# baze, data/, error_log), ostanejo nedotaknjene. Izvzem je dvojna varnost, če
+# bi kdo config.php kdaj po pomoti dodal v git.
+#
+# --chmod: cPanel git mapa je 0700; brez tega bi rsync -a prenesel te pravice
+# in spletni strežnik bi vrnil 404 (enako kot pri Tatjani).
+deployment:
+  tasks:
+    - export DEPLOYPATH=$HOME/public_html/miza/
+    - /usr/bin/rsync -rlt --chmod=D755,F644 --exclude='config.php' --exclude='data/*' --exclude='error_log' --exclude='.gitignore' miza/ $DEPLOYPATH

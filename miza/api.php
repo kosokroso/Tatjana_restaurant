@@ -66,10 +66,16 @@ try {
             case 'ai/day_slots':
                 out(['ok' => true, 'date' => need('date'), 'times' => day_slots($rid, need('date'), (int)need('party_size'), $b['zone'] ?? null)]);
             case 'ai/reservations':
-                $r = create_reservation($rid, $b, $b['source'] ?? 'tatjana');
+                // Vir je vedno 'tatjana': telo zahtevka sestavi model in statistike
+                // virov ne sme moči ponarediti. Brez telefona v telesu vzamemo
+                // številko klicatelja, ki jo agent prebere iz SIP.
+                $d = $b;
+                if (empty($d['phone']) && !empty($b['caller_phone'])) $d['phone'] = $b['caller_phone'];
+                unset($d['table_ids'], $d['force'], $d['duration_minutes']);
+                $r = create_reservation($rid, $d, 'tatjana');
                 out(['ok' => true, 'reservation' => ai_res($r)]);
             case 'ai/reservations/find':
-                out(['ok' => true, 'reservations' => array_map('ai_res', find_reservations($rid, $b['phone'] ?? null, $b['code'] ?? null, $b['name'] ?? null))]);
+                out(['ok' => true, 'reservations' => array_map('ai_res', ai_find($rid, $b))]);
             case 'ai/reservations/cancel':
                 $r = ai_lookup($rid, $b);
                 out(['ok' => true, 'reservation' => ai_res(cancel_reservation($rid, (int)$r['id']))]);
@@ -82,7 +88,9 @@ try {
                 $desired = !empty($b['pickup_time']) ? (strlen($b['pickup_time']) <= 5 ? date('Y-m-d') . ' ' . $b['pickup_time'] : $b['pickup_time']) : null;
                 out(['ok' => true] + quote_order($rid, $b['items'] ?? [], $desired));
             case 'ai/orders':
-                $o = create_order($rid, $b, $b['source'] ?? 'tatjana');
+                $d = $b;
+                if (empty($d['phone']) && !empty($b['caller_phone'])) $d['phone'] = $b['caller_phone'];
+                $o = create_order($rid, $d, 'tatjana');
                 out(['ok' => true, 'order' => ['code' => $o['code'], 'pickup_at' => $o['pickup_at'], 'total_eur' => $o['total_cents'] / 100, 'items' => $o['items']]]);
         }
         fail('not_found', 'Neznana pot.', 404);
@@ -305,10 +313,26 @@ function ai_res(array $r): array {
         'tables' => array_column($r['tables'], 'name'), 'notes' => $r['notes'],
     ];
 }
+/**
+ * Rezervacije, ki jih sme videti klicatelj: po kodi ali po njegovi številki.
+ *
+ * Nikoli po imenu in nikoli po telefonu, ki ga izreče klicatelj. 'caller_phone'
+ * vpiše agent iz SIP povezave (sip.phoneNumber), model ga ne more nastaviti.
+ * Brez tega bi klicatelj rekel "rezervacije na ime Novak" ali "na številko
+ * 041 ..." in slišal ali odpovedal tuje rezervacije. Koda ima 6 naključnih
+ * znakov (32^6), ugibanje po telefonu ni izvedljivo.
+ */
+function ai_find(int $rid, array $b): array {
+    $code = strtoupper(trim((string)($b['code'] ?? '')));
+    $caller = trim((string)($b['caller_phone'] ?? ''));
+    if ($code !== '') return find_reservations($rid, null, $code);
+    // Skrita številka ali "anonymous": brez kode ni iskanja.
+    if ($caller !== '' && preg_match('/\d{6,}/', $caller)) return find_reservations($rid, $caller, null);
+    throw new BookingError('missing_field', 'Povej kodo rezervacije iz SMS sporočila.');
+}
+
 function ai_lookup(int $rid, array $b): array {
-    // samo po kodi ali telefonu klicatelja, da nihče ne more spremeniti tuje rezervacije po id
-    if (empty($b['code']) && empty($b['phone'])) throw new BookingError('missing_field', 'Potrebna je koda rezervacije ali telefonska številka.');
-    $found = find_reservations($rid, $b['phone'] ?? null, $b['code'] ?? null);
+    $found = ai_find($rid, $b);
     if (count($found) > 1 && !empty($b['original_date'])) {
         $found = array_values(array_filter($found, fn($r) => substr($r['start_at'], 0, 10) === $b['original_date']));
     }

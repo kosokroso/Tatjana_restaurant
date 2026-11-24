@@ -293,6 +293,8 @@ function find_reservations(int $rid, ?string $phone, ?string $code, ?string $nam
 function cancel_reservation(int $rid, int $id): array {
     $r = row('SELECT * FROM reservations WHERE id = ? AND restaurant_id = ?', [$id, $rid]);
     if (!$r) throw new BookingError('not_found', 'Rezervacija ne obstaja.');
+    // Gost, ki že sedi ali je odšel, rezervacije ne more odpovedati po telefonu.
+    if ($r['status'] !== 'confirmed') throw new BookingError('invalid_status', 'Te rezervacije ni več mogoče odpovedati.');
     update('reservations', ['status' => 'cancelled', 'updated_at' => now_str()], 'id = ?', [$id]);
     return reservation_out(row('SELECT * FROM reservations WHERE id = ?', [$id]));
 }
@@ -309,6 +311,16 @@ function change_reservation(int $rid, int $id, array $d, bool $staff = false): a
     $pdo = db();
     $pdo->beginTransaction();
     try {
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            // Enak zaklep kot pri create_reservation. Brez njega lahko dve hkratni
+            // spremembi (ali sprememba in nova rezervacija) dobita isto mizo.
+            q('SELECT id FROM restaurants WHERE id = ? FOR UPDATE', [$rid]);
+            $r = row('SELECT * FROM reservations WHERE id = ? AND restaurant_id = ?', [$id, $rid]);
+            if (!$r) throw new BookingError('not_found', 'Rezervacija ne obstaja.');
+        }
+        if (!in_array($r['status'], ['confirmed', 'seated'], true)) {
+            throw new BookingError('invalid_status', 'Odpovedane ali zaključene rezervacije ni mogoče spreminjati.');
+        }
         if (!empty($d['table_ids']) && $staff) {
             $dur = (int)round((dt($r['end_at'])->getTimestamp() - dt($r['start_at'])->getTimestamp()) / 60);
             if (!empty($d['duration_minutes'])) $dur = (int)$d['duration_minutes'];
