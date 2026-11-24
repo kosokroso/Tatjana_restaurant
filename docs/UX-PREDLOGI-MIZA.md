@@ -1,0 +1,58 @@
+# Portal /miza: analiza in predlogi za osebje
+
+Stanje 24. 11. 2026. Pregledani vsi zasloni na namizju (1400 px) in telefonu (375 px), lokalna kopija z enakimi podatki.
+
+Izhodišče: kdo uporablja portal in kako.
+- **Natakar / šank** med servisom: stoji, ima tablico ali telefon, ena roka prosta, 5 sekund časa. Potrebuje: kdo pride zdaj, katera miza je prosta, en dotik za "prišli".
+- **Vodja izmene**: pred servisom pregleda dan, ureja rezervacije, odgovarja na klice, ki jih Tatjana ni rešila.
+- **Lastnik**: tloris, meni, urnik, uporabniki. Redko.
+
+Portal je zdaj narejen za tretjega (namizje, veliko podatkov naenkrat). Prva dva sta pozabljena.
+
+## Že popravljeno (lokalno, čaka na deploy)
+
+| # | Kaj | Zakaj |
+|---|---|---|
+| 1 | Vsaka miza na tlorisu pokaže svojo naslednjo rezervacijo dneva (`19:00 Luka · 2 +1`), oranžen rob spodaj; v uri pred prihodom črtkan rob "kmalu" | Prej je ob 12h vse kazalo "prosto", čeprav je bila zvečer rezervacija; natakar bi mizo oddal |
+| 2 | Pregled dneva se osveži vsakih 20 s (samo ko je zavihek viden) | Rezervacija iz klica se je pokazala šele po ročnem osveževanju strani |
+| 3 | Obvestilo "Nova rezervacija (Tatjana): sreda 25. 11. 20:00, Ana Novak, 4 os." na vseh zaslonih, za vse dni | Tatjana rezervira večinoma vnaprej; brez tega osebje ne ve, da je bila rezervacija sploh narejena |
+| 4 | Pas "Ni povezave. Prikazano stanje je od HH:MM." ob izpadu omrežja | Zastarel tloris je nevarnejši od praznega |
+| 5 | Gumb "Zdaj" ob drsniku časa | En dotik nazaj na trenutni čas |
+
+## Predlogi
+
+### P0: pred pilotom (brez tega osebje portala ne bo uporabljalo)
+
+1. **Telefon in tablica.** Obrazec "Nova rezervacija" se na telefonu odpre napol izven zaslona; meni zgoraj zasede tretjino zaslona; tabela rezervacij se ne prilega (vodoravno drsenje); tloris je pomanjšan do neberljivosti. Predlog: na zaslonih pod 900 px namesto tlorisa seznam **"Prihodi"** (velike vrstice, en dotik = Prišli), meni kot spodnja vrstica z 4 ikonami, obrazec čez cel zaslon.
+2. **Zvok obvestil** se vklopi samo na strani Naročila. Predlog: stikalo v stranski vrstici, zapomni si izbiro na napravi; ob novi rezervaciji iz klica kratek zvok.
+3. **"Kaj je zdaj"** na vrhu pregleda dneva: tri skupine *Prihaja (naslednjih 60 min)*, *Za mizo*, *Kasneje*. Danes je to en seznam po uri, kjer mora natakar sam iskati.
+4. **Zamuda in neprihod.** 15 min po začetku brez "Prišli" rezervacija postane rdeča "zamuja 15 min" z gumbom za klic (`tel:`); po 30 min predlog "Ni prišel". Miza se sicer drži do konca termina in ostane prazna.
+5. **Gost brez rezervacije (walk-in).** Gumb "Gost brez rezervacije": izbereš mizo in število oseb, ime ni obvezno, začetek = zdaj, status takoj "Za mizo". Danes je treba izpolniti cel obrazec z imenom.
+
+### P1: vsakodnevno delo
+
+6. **Dotik mize na tlorisu odpre majhen meni** (Prišli / Odšli / Ni prišel / Premakni / Nova rezervacija). Danes dotik izbere rezervacijo v seznamu na desni, akcija je drugje.
+7. **Opombe vidne na mizi**: ikona za alergijo, otroški stol, rojstni dan. Danes so samo v seznamu.
+8. **Iskanje v pregledu dneva** (ime, telefon, koda). Gost pride in reče "na ime Novak"; danes iskanje obstaja samo na strani Rezervacije.
+9. **Oznaka "nova"** pri rezervacijah, ki jih je naredila Tatjana in jih nihče še ni odprl, ter števec na zavihku Rezervacije.
+10. **"Vseeno shranim (dvojna zasedba)"** naj bo dovoljeno samo vodji in naj pusti sled; danes ga lahko potrdi kdorkoli z enim klikom.
+11. **Časovnica** naj ima zamrznjen stolpec z imeni miz in samodejno pomakne na zdaj; na manjših zaslonih je danes ime mize izven vidnega dela.
+
+### P2: upravljanje
+
+12. **Vloge.** Danes je vsak uporabnik `admin` in lahko spreminja meni, urnik, tloris, API ključ in gesla drugih. Predlog: *osebje* (pregled, rezervacije, naročila) in *vodja* (vse).
+13. **Prijava s PIN na tablici** (iz specifikacije faze 2): po prvi prijavi z geslom 4-mestni PIN na tej napravi; menjava izmene v 3 sekundah.
+14. **PWA**: manifest in ikona, da se portal namesti na tablico kot aplikacija (celozaslonsko, brez naslovne vrstice brskalnika). Service worker samo za lupino; podatki vedno sveži.
+15. **Zgodovina rezervacije**: kdo je kdaj kaj spremenil (osebje / Tatjana). Pomaga pri sporu z gostom.
+16. **Tisk / PDF dnevnega seznama** za kuhinjo in za izpad interneta.
+17. **Omejitev prijave** (5 napačnih poskusov = 15 min zaklepa); zdaj je neomejena.
+
+## Predlagan vrstni red
+
+1. Deploy že popravljenega (1–5 zgoraj): 10 min.
+2. P0-1 telefon/tablica in P0-3 "Kaj je zdaj": največji vpliv na servis. Ocena: pol dneva.
+3. P0-2, P0-4, P0-5: po uro do dve vsak. Ocena je ugibanje, dokler ne vidimo, kako kolega ureja kodo.
+4. P1 po povratnih informacijah pilotne restavracije.
+5. P2-12 vloge in P2-17 omejitev prijave pred prvo pravo stranko (varnost).
+
+Ocene časa so groba ocena, ne zaveza.

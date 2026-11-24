@@ -168,3 +168,10 @@ code.key{background:#f2eee8;padding:6px 10px;border-radius:6px;font-size:12px;wo
 
 @media (max-width:1100px){.day,.editor{grid-template-columns:1fr}.list{max-height:none}.kanban{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:760px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;overflow:auto;padding:10px}.side h1,.side .foot{display:none}.side a{white-space:nowrap}.main{padding:14px}.grid3,.grid4{grid-template-columns:1fr 1fr}.kanban{grid-template-columns:1fr}}
+
+/* Tloris: miza ima danes še rezervacijo (kasneje / v naslednji uri). */
+.tbl.later{box-shadow:inset 0 -5px 0 var(--res-b)}
+.tbl.later .sub{color:#8a5d00;font-weight:600}
+.tbl.soon{border-color:var(--res-b);border-style:dashed;background:#fff7e8}
+.tbl.soon .sub{color:#8a5d00;font-weight:700}
+#stale{margin-bottom:10px}

@@ -97,9 +97,16 @@ function tableState(t, minute) {
   const rs = S.day.reservations.filter(r => ['confirmed', 'seated'].includes(r.status) && r.tables.some(x => +x.id === +t.id));
   const cur = rs.find(r => minOf(r.start_at, S.day.date) <= minute && minute < minOf(r.end_at, S.day.date));
   if (cur) return { cls: cur.status === 'seated' ? 'seated' : 'res', sub: `${esc(cur.name)} · ${cur.party_size}`, res: cur };
-  const next = rs.filter(r => minOf(r.start_at, S.day.date) > minute).sort((a, b) => a.start_at.localeCompare(b.start_at))[0];
-  if (next && minOf(next.start_at, S.day.date) - minute <= 120) return { cls: '', sub: 'ob ' + timeOf(next.start_at) };
-  return { cls: '', sub: '' };
+  // Prej je tloris pokazal naslednjo rezervacijo samo, če je bila v 2 urah, in
+  // osebje je ob 12h videlo vse mize "proste", čeprav je bila zvečer polna sala.
+  // Zdaj vsaka miza pove svojo naslednjo rezervacijo dneva; v uri pred njo je
+  // obarvana kot "kmalu", da je natakar ne odda gostu brez rezervacije.
+  const ahead = rs.filter(r => minOf(r.start_at, S.day.date) > minute).sort((a, b) => a.start_at.localeCompare(b.start_at));
+  const next = ahead[0];
+  if (!next) return { cls: '', sub: '' };
+  const inMin = minOf(next.start_at, S.day.date) - minute;
+  const more = ahead.length > 1 ? ` +${ahead.length - 1}` : '';
+  return { cls: inMin <= 60 ? 'soon' : 'later', sub: `${timeOf(next.start_at)} ${esc(next.name.split(' ')[0])} · ${next.party_size}${more}`, next };
 }
 function tableHTML(t, extra = '', sub = '') {
   return `<div class="tbl ${t.shape === 'round' ? 'round' : ''} ${+t.reservable ? '' : 'off'} ${extra}" data-tid="${t.id ?? t._k}"
@@ -112,8 +119,9 @@ async function viewDay() {
   m.innerHTML = `<div class="top"><h2 class="grow">Pregled dneva</h2>
     <div class="datenav"><button class="btn" id="dprev">‹</button><input type="date" id="ddate" value="${S.date}"><button class="btn" id="dnext">›</button><button class="btn" id="dtoday">Danes</button></div>
     <button class="btn primary" id="newres">+ Nova rezervacija</button></div>
+    <div class="alert" id="stale" hidden></div>
     <div class="day"><div><div class="card plan-wrap"><div id="plan"></div>
-      <div class="slider"><span class="muted small">Čas</span><input type="range" id="tslider" step="15"><b id="tlabel"></b></div>
+      <div class="slider"><span class="muted small">Čas</span><input type="range" id="tslider" step="15"><b id="tlabel"></b>${S.date === today() ? '<button class="btn sm" id="tnow">Zdaj</button>' : ''}</div>
       <div class="legend"><span><i style="background:var(--free);border-color:var(--free-b)"></i>Prosto</span><span><i style="background:var(--res);border-color:var(--res-b)"></i>Rezervirano</span><span><i style="background:var(--seat);border-color:var(--seat-b)"></i>Gostje za mizo</span><span><i style="background:var(--off);border-color:var(--off-b)"></i>Ni za rezervacije</span></div>
     </div><div class="card tl pad" id="timeline"></div></div>
     <div class="card list" id="rlist"></div></div>`;
@@ -126,6 +134,9 @@ async function viewDay() {
 }
 async function loadDay() {
   S.day = await api('day', { date: S.date });
+  S.dayAt = new Date();
+  markSeen(S.day.reservations);
+  startDayPoll();
   const hrs = S.day.hours.length ? S.day.hours : [['12:00', '22:00']];
   const lo = toMin(hrs[0][0]), hi = Math.max(...hrs.map(h => { let c = toMin(h[1]); if (c <= toMin(h[0])) c += 1440; return c; }));
   S.range = [lo, hi];
@@ -133,6 +144,8 @@ async function loadDay() {
   const sl = $('#tslider'); if (!sl) return;
   sl.min = lo; sl.max = hi; sl.value = S.minute;
   sl.oninput = e => { S.minute = +e.target.value; drawPlan(); };
+  const tn = $('#tnow');
+  if (tn) tn.onclick = () => { S.minute = Math.min(hi, Math.max(lo, Math.round(nowMin() / 15) * 15)); sl.value = S.minute; drawPlan(); };
   drawPlan(); drawTimeline(); drawList();
 }
 function drawPlan() {
@@ -146,9 +159,44 @@ function drawPlan() {
   $$('#plan .tbl').forEach(el => el.onclick = () => {
     const t = tables.find(x => +x.id === +el.dataset.tid);
     const st = tableState(t, S.minute);
-    if (st.res) { S.sel = st.res.id; drawPlan(); drawList(); scrollToRes(st.res.id); }
+    const r = st.res || st.next;
+    if (r) { S.sel = r.id; drawPlan(); drawList(); scrollToRes(r.id); }
     else resModal({ date: S.date, time: fromMin(S.minute), party_size: Math.min(2, t.max_seats), table_ids: [t.id], zone_pref: t.zone });
   });
+}
+/* Samodejno osveževanje pregleda dneva.
+   Rezervacijo, ki jo Tatjana naredi med klicem, mora osebje videti brez
+   ponovnega nalaganja strani. Vsakih 20 s, samo ko je zavihek viden. */
+let dayT = null;
+const seenRes = new Set();
+function markSeen(rs, announce = false) {
+  rs.forEach(r => {
+    if (!seenRes.has(r.id) && announce && r.source === 'tatjana' && r.status === 'confirmed') {
+      toast(`Nova rezervacija (Tatjana): ${dateLabel(r.start_at.slice(0, 10))} ${timeOf(r.start_at)}, ${r.name}, ${r.party_size} os.`);
+      beep();
+    }
+    seenRes.add(r.id);
+  });
+}
+function startDayPoll() {
+  if (dayT) return;
+  dayT = setInterval(async () => {
+    if (S.view !== 'pregled') { clearInterval(dayT); dayT = null; return; }
+    if (document.hidden) return;
+    try {
+      const d = await api('day', { date: S.date });
+      if (S.view !== 'pregled' || d.date !== S.date) return;
+      // Obvestilo da globalni števec (reservations/new); tu samo osvežimo.
+      markSeen(d.reservations);
+      S.day = d; S.dayAt = new Date();
+      drawPlan(); drawTimeline(); drawList(); drawStale(false);
+    } catch (e) { if (e.message !== 'unauth') drawStale(true); }
+  }, 20000);
+}
+function drawStale(stale) {
+  const el = $('#stale'); if (!el) return;
+  el.hidden = !stale;
+  if (stale && S.dayAt) el.textContent = `Ni povezave. Prikazano stanje je od ${S.dayAt.toTimeString().slice(0, 5)}.`;
 }
 function scrollToRes(id) { const el = $(`.ritem[data-rid="${id}"]`); el && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
 function drawTimeline() {
@@ -393,6 +441,14 @@ function startBadgePoll() {
       const b = $('#obadge'); if (b) { b.hidden = !n; b.textContent = n; }
       if (S.lastOrderId != null && j.latest_id > S.lastOrderId) { beep(); if (S.view !== 'narocila') toast('Novo naročilo za prevzem'); }
       S.lastOrderId = j.latest_id;
+      // Nove rezervacije za kateri koli dan (Tatjana rezervira večinoma vnaprej).
+      const rn = await api('reservations/new', S.lastResId != null ? { after_id: S.lastResId } : {});
+      if (S.lastResId != null) {
+        markSeen(rn.reservations, true);
+        if (rn.reservations.length && S.view === 'pregled' && rn.reservations.some(r => r.start_at.slice(0, 10) === S.date)) loadDay();
+        if (rn.reservations.length && S.view === 'rezervacije') viewList();
+      }
+      S.lastResId = rn.max_id;
     } catch { }
   };
   tick(); badgeT = setInterval(tick, 15000);

@@ -74,6 +74,28 @@ Prvotni predlog:
 V aplikaciji: ime, naslov, urnik, zaprti dnevi, meni z alergeni, cone, `max_party_online`. Nov API ključ v Nastavitvah. Ključ gre samo v LiveKit secrets, ne v klepet in ne v repozitorij.
 Končano, ko: `ai/info` vrne pravilne podatke.
 
+### Stanje 24. 11. 2026: prvi pravi klic je uspel
+
+Klic na 05 777 41 21 -> rezervacija za 2 osebi danes ob 19:00, miza T3, vir `tatjana`, vidna v Pregledu dneva.
+
+| Del | Kje |
+|---|---|
+| Agent | `tatjana_ai/voice-agent/restavracija.py` + `miza_pravila.py`; zažene ga `agent.py`, ko je `AGENT_ZAGON=restavracija.py` |
+| LiveKit | projekt `miza` (`p_55pmglj2kms`, EU), agent `CA_5zMi6waWXaXN`, ime `tatjana-miza` |
+| Deploy | GitHub Actions `Agent miza` v `tatjana_ai` (dejanja deploy, logs, check, docker); skrivnost `MIZA_ENV`, spremenljivka `MIZA_AGENT_ID`. Lokalno `lk.exe` blokira Windows Application Control. |
+| Telefonija | DIDWW trunk "Tatjana Miza" -> LiveKit trunk `ST_aMxFKH4fNakr` -> dispatch "Miza klici" (sobe `miza_*`) |
+
+Kar je stalo pol dneva (da se ne ponovi):
+- LiveKit Cloud agentu **ne sme** dobiti `LIVEKIT_URL/API_KEY/API_SECRET` med skrivnostmi (vstavi jih sam); z njimi je agent v CrashLoop.
+- `CMD` v Dockerfile mora biti fiksen, brez `sh -c` ovoja.
+- Vrednosti, zapisane v `$GITHUB_ENV`, GitHub ne prekrije: vedno `::add-mask::` prej. Ena skrivnost je tako bila nekaj minut javna; dnevnika sta izbrisana, ključ zamenjan.
+
+Odprto pred javno številko:
+- [ ] LiveKit trunk: `allowed_addresses` na signalne naslove DIDWW
+- [ ] Scenariji in napadi (korak 5), vsaj ročno: tuja številka, tuje ime, brez potrditve
+- [ ] Dnevna meja minut v `call-guard.php` je skupna z agencijo
+- [ ] Observability v projektu miza hrani prepise klicev (osebni podatki): odločitev, ali ostane vklopljen
+
 ### 4. Restavracijski agent
 Ločen agent (`AGENT_IME=tatjana-miza`), ista infrastruktura kot Tatjana. Predlog zgradbe: nov modul `voice-agent/restavracija.py` z razredom `RestavracijskiAsistent` in orodji, ki kličejo `/miza/api.php?r=ai/...`. Prepis, glas, VAD, tišino in meje klicev uvozi iz `agent.py`. Tako se obstoječa Tatjana ne spremeni.
 

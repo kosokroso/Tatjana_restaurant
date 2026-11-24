@@ -187,6 +187,14 @@ try {
             if ($st === 'completed' && dt($r['end_at']) > new DateTimeImmutable()) $upd['end_at'] = now_str();
             update('reservations', $upd, 'id = ?', [(int)$r['id']]);
             out(['ok' => true, 'reservation' => reservation_out(row('SELECT * FROM reservations WHERE id = ?', [(int)$r['id']]))]);
+        case 'reservations/new':
+            // Nove rezervacije za obvestilo osebju (vse dni, ne samo prikazanega).
+            // Brez after_id vrne samo trenutni najvišji id: ob prvem nalaganju
+            // aplikacija ne sme oznanjati starih rezervacij kot novih.
+            $max = (int)val('SELECT COALESCE(MAX(id),0) FROM reservations WHERE restaurant_id = ?', [$rid]);
+            if (!isset($b['after_id'])) out(['ok' => true, 'max_id' => $max, 'reservations' => []]);
+            $new = rows('SELECT * FROM reservations WHERE restaurant_id = ? AND id > ? ORDER BY id LIMIT 20', [$rid, (int)$b['after_id']]);
+            out(['ok' => true, 'max_id' => $max, 'reservations' => array_map('reservation_out', $new)]);
         case 'reservations/list':
             $from = (string)($b['from'] ?? date('Y-m-d'));
             $to = (string)($b['to'] ?? dt($from)->modify('+30 days')->format('Y-m-d'));

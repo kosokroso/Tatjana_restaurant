@@ -5,3 +5,6 @@ logs/
 .env
 .env.*
 /docker/data/
+
+# Lokalne nastavitve orodij
+.claude/
