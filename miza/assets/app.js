@@ -1,7 +1,8 @@
 'use strict';
 /* Tatjana Miza · admin aplikacija (brez ogrodij) */
 
-const S = { me: null, view: 'pregled', date: today(), minute: null, day: null, sel: null, selTable: null, tab: 'list', doneOpen: false };
+const S = { me: null, view: 'pregled', date: today(), minute: null, day: null, sel: null, selTable: null, tab: 'list', doneOpen: false, tlDays: 1, tl: null, tlFresh: true };
+try { S.tlDays = [1, 3, 7].includes(+localStorage.getItem('tm_tl')) ? +localStorage.getItem('tm_tl') : 1; } catch { }
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -159,24 +160,32 @@ async function viewDay() {
     <div class="statline" id="stat"></div>
     <div class="alert" id="stale" hidden></div>
     <div class="seg" id="dtabs" role="tablist"><button data-tab="list">Seznam</button><button data-tab="plan">Mize</button><button data-tab="time">Časovnica</button></div>
-    <div class="day" data-tab="${S.tab}"><div class="dcol">
+    <div class="day" data-tab="${S.tab}"><div class="dtop"><div class="dcol">
       <section class="panel plan-wrap pane pane-plan"><div id="plan"></div>
         <div class="slider"><span class="muted small">Čas</span><input type="range" id="tslider" step="15" aria-label="Čas na tlorisu"><b id="tlabel"></b>${S.date === today() ? '<button class="btn sm" id="tnow">Zdaj</button>' : ''}</div>
         <div class="legend"><span><i></i>Prosto</span><span><i class="s-soon"></i>Kmalu rezervirano</span><span><i class="s-res"></i>Rezervirano</span><span><i class="s-seated"></i>Gostje za mizo</span><span><i class="s-off"></i>Ni za rezervacije</span></div>
       </section>
-      <section class="panel tl pane pane-time" id="timeline"></section></div>
-      <section class="panel list pane pane-list" id="rlist"></section></div>`;
+      </div>
+      <section class="panel list pane pane-list" id="rlist"></section></div>
+      <section class="panel tl pane pane-time" id="timeline"><div class="tlbar"><h3>Časovnica miz</h3><span class="muted small" id="tlrange"></span><span class="grow"></span>
+        <span class="rseg" id="tlseg"><button data-r="1">Dan</button><button data-r="3">3 dni</button><button data-r="7">Teden</button></span><button class="btn sm" id="tlnow">Zdaj</button></div>
+        <div class="tlscroll" id="tlscroll"></div></section></div>`;
   $('#ddate').onchange = e => { if (!e.target.value) return; S.date = e.target.value; S.minute = null; viewDay(); };
   $('#dprev').onclick = () => { S.date = addDays(S.date, -1); S.minute = null; viewDay(); };
   $('#dnext').onclick = () => { S.date = addDays(S.date, 1); S.minute = null; viewDay(); };
   $('#dtoday').onclick = () => { S.date = today(); S.minute = null; viewDay(); };
   $('#newres').onclick = () => resModal({ date: S.date, time: S.minute != null ? fromMin(S.minute) : '19:00' });
-  $$('#dtabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; syncTabs(); if (S.tab === 'plan' && S.day) drawPlan(); });
+  $$('#dtabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; syncTabs(); if (S.tab === 'plan' && S.day) drawPlan(); if (S.tab === 'time') drawTimeline(); });
+  $$('#tlseg button').forEach(b => b.onclick = () => { S.tlDays = +b.dataset.r; S.tlFresh = true; try { localStorage.setItem('tm_tl', S.tlDays); } catch { } loadTimeline(); });
+  $('#tlnow').onclick = () => { const sc = $('#tlscroll'); if (sc && S.tlNowX != null) sc.scrollTo({ left: Math.max(0, S.tlNowX - sc.clientWidth * .3), behavior: 'smooth' }); };
+  S.tlFresh = true;
   syncTabs();
   // Tloris se prilagodi širini, ko se spremeni (drsnik strani, vrtenje tablice, zavihek).
   if (window.ResizeObserver) {
     let lastW = 0;
     new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w && w !== lastW) { lastW = w; if (S.day && S.view === 'pregled') drawPlan(); } }).observe($('#plan'));
+    let lastT = 0;
+    new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w && w !== lastT) { lastT = w; if (S.tl && S.view === 'pregled') drawTimeline(); } }).observe($('#tlscroll'));
   }
   await loadDay();
 }
@@ -198,7 +207,7 @@ async function loadDay() {
   sl.oninput = e => { S.minute = +e.target.value; drawPlan(); };
   const tn = $('#tnow');
   if (tn) tn.onclick = () => { S.minute = Math.min(hi, Math.max(lo, Math.round(nowMin() / 15) * 15)); sl.value = S.minute; drawPlan(); };
-  drawPlan(); drawTimeline(); drawList();
+  drawPlan(); drawList(); loadTimeline();
 }
 function drawPlan() {
   const tables = S.day.tables, [w, h] = planSize(tables);
@@ -251,7 +260,7 @@ function startDayPoll() {
       // Obvestilo da globalni števec (reservations/new); tu samo osvežimo.
       markSeen(d.reservations);
       S.day = d; S.dayAt = new Date();
-      drawPlan(); drawTimeline(); drawList(); drawStale(false);
+      drawPlan(); drawList(); loadTimeline(); drawStale(false);
     } catch (e) { if (e.message !== 'unauth') drawStale(true); }
   }, 20000);
 }
@@ -261,20 +270,103 @@ function drawStale(stale) {
   if (stale && S.dayAt) el.textContent = `Ni povezave. Prikazano stanje je od ${S.dayAt.toTimeString().slice(0, 5)}.`;
 }
 function scrollToRes(id) { const el = $(`.ritem[data-rid="${id}"]`); el && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-function drawTimeline() {
-  const [lo, hi] = S.range, span = hi - lo, pct = m => ((m - lo) / span * 100) + '%';
-  const hours = []; for (let m = Math.ceil(lo / 60) * 60; m <= hi; m += 60) hours.push(m);
-  const nm = S.date === today() ? nowMin() : -1;
-  const rows = S.day.tables.map(t => {
-    const blocks = S.day.reservations.filter(r => !['cancelled', 'no_show'].includes(r.status) && r.tables.some(x => +x.id === +t.id)).map(r => {
-      const a = Math.max(lo, minOf(r.start_at, S.date)), b = Math.min(hi, minOf(r.end_at, S.date));
-      return `<div class="blk ${r.status}" data-rid="${r.id}" style="left:${pct(a)};width:calc(${(b - a) / span * 100}% - 2px)" title="${esc(r.name)}">${timeOf(r.start_at)} ${esc(r.name)} · ${r.party_size}</div>`;
-    }).join('');
-    return `<tr><th>${esc(t.name)}</th><td><div class="lane">${hours.map(m => `<div class="grid" style="left:${pct(m)}"></div>`).join('')}${nm >= lo && nm <= hi ? `<div class="now" style="left:${pct(nm)}"></div>` : ''}${blocks}</div></td></tr>`;
-  }).join('');
-  $('#timeline').innerHTML = `<h3 style="margin-bottom:8px">Časovnica miz</h3><table><tr><th></th><td><div class="lane hours">${hours.map(m => `<span style="left:${pct(m)}">${fromMin(m)}</span>`).join('')}</div></td></tr>${rows}</table>`;
-  $$('#timeline .blk').forEach(b => b.onclick = () => { const r = S.day.reservations.find(x => x.id === +b.dataset.rid); resModal(r); });
+/* Časovnica: vrstice so mize, vodoravna os je čas. Za več dni so dnevi v isti osi
+   (vsak dan ima svoj delovni čas, zaprt dan je ozek). Imena miz in dnevi so lepljivi,
+   da se ob drsenju vedno vidi, katera miza in kateri dan je to. */
+const TL = { NAME: 78, ROW: 44, CLOSED: 84 };
+const LIVE = d => d.reservations.filter(r => !['cancelled', 'no_show'].includes(r.status));
+function dayRange(d) {
+  let lo = null, hi = null;
+  (d.hours || []).forEach(([o, c]) => { const a = toMin(o); let b = toMin(c); if (b <= a) b += 1440; lo = lo == null ? a : Math.min(lo, a); hi = hi == null ? b : Math.max(hi, b); });
+  LIVE(d).forEach(r => { const a = minOf(r.start_at, d.date), b = minOf(r.end_at, d.date); lo = lo == null ? a : Math.min(lo, a); hi = hi == null ? b : Math.max(hi, b); });
+  return lo == null ? null : [Math.floor(lo / 60) * 60, Math.ceil(hi / 60) * 60];
 }
+function sortedTables(ts) {
+  const zs = (S.me.settings.zones || []), zi = z => { const i = zs.indexOf(z); return i < 0 ? 99 : i; };
+  return [...ts].sort((a, b) => zi(a.zone) - zi(b.zone) || String(a.name).localeCompare(String(b.name), 'sl', { numeric: true }));
+}
+async function loadTimeline() {
+  const n = S.tlDays, dates = Array.from({ length: n }, (_, i) => addDays(S.date, i));
+  try {
+    const days = await Promise.all(dates.map(dt => S.day && S.day.date === dt ? S.day : api('day', { date: dt })));
+    if (dates[0] !== S.date || n !== S.tlDays || S.view !== 'pregled') return;
+    S.tl = days; drawTimeline();
+  } catch (e) { if (e.message !== 'unauth') drawStale(true); }
+}
+function drawTimeline() {
+  const sc = $('#tlscroll'); if (!sc || !S.tl || !S.day) return;
+  const { NAME, CLOSED } = TL, days = S.tl, n = days.length, isToday = d => d.date === today();
+  const ranges = days.map(dayRange);
+  const hoursTotal = ranges.reduce((s, r) => s + (r ? (r[1] - r[0]) / 60 : 0), 0) || 1;
+  const closed = ranges.filter(r => !r).length;
+  const avail = (sc.clientWidth || 720) - NAME - 2;
+  const pph = Math.max({ 1: 56, 3: 48, 7: 40 }[n] || 40, (avail - closed * CLOSED) / hoursTotal);   // px na uro
+  const ppm = pph / 60, nm = nowMin(), step = pph >= 48 ? 1 : 2;
+  let x = 0;
+  const geo = ranges.map(r => { const w = r ? (r[1] - r[0]) * ppm : CLOSED; const g = { x, w }; x += w; return g; });
+  const total = Math.round(x);
+
+  const lbl = $('#tlrange');
+  if (lbl) lbl.textContent = n === 1 ? dateLabel(days[0].date) : `${dateLabel(days[0].date)} do ${dateLabel(days[n - 1].date)}`;
+  $$('#tlseg button').forEach(b => b.classList.toggle('on', +b.dataset.r === n));
+  const tn = $('#tlnow'); if (tn) tn.hidden = !days.some(isToday);
+
+  const head = days.map((d, i) => {
+    const g = geo[i], r0 = ranges[i], dt = new Date(d.date + 'T12:00:00');
+    const act = d.reservations.filter(r => ['confirmed', 'seated'].includes(r.status));
+    const gu = act.reduce((s, r) => s + r.party_size, 0);
+    let ticks = '';
+    if (r0) for (let m = r0[0]; m < r0[1]; m += 60 * step) ticks += `<span style="left:${(m - r0[0]) * ppm}px">${fromMin(m)}</span>`;
+    return `<div class="tld${isToday(d) ? ' today' : ''}" data-date="${d.date}" style="width:${g.w}px" title="Odpri ${esc(dateLabel(d.date))}"><div class="tld-h"><b>${DAYS[dt.getDay() || 7].slice(0, 3)} ${dt.getDate()}. ${dt.getMonth() + 1}.</b><span>${r0 ? `${act.length} rez · ${gu} os.` : 'zaprto'}</span></div><div class="tld-t">${ticks}</div></div>`;
+  }).join('');
+
+  let gl = '';
+  days.forEach((d, i) => {
+    const g = geo[i], r0 = ranges[i];
+    gl += `<i class="day" style="left:${g.x}px"></i>`;
+    if (!r0) { gl += `<i class="closed" style="left:${g.x}px;width:${g.w}px"></i>`; return; }
+    for (let m = r0[0] + 60; m < r0[1]; m += 60) gl += `<i style="left:${g.x + (m - r0[0]) * ppm}px"></i>`;
+    if (isToday(d) && nm >= r0[0] && nm <= r0[1]) gl += `<i class="now" style="left:${g.x + (nm - r0[0]) * ppm}px"></i>`;
+  });
+
+  const tables = sortedTables(S.day.tables), zones = new Set(tables.map(t => t.zone || ''));
+  let rows = '', lastZone = null;
+  tables.forEach(t => {
+    if (zones.size > 1 && (t.zone || '') !== lastZone) { lastZone = t.zone || ''; rows += `<div class="tlz" style="width:${NAME + total}px"><span>${esc(lastZone || 'Brez cone')}</span></div>`; }
+    const blocks = days.map((d, i) => {
+      const g = geo[i], r0 = ranges[i]; if (!r0) return '';
+      return LIVE(d).filter(r => r.tables.some(y => +y.id === +t.id)).map(r => {
+        const a = Math.max(r0[0], minOf(r.start_at, d.date)), b = Math.min(r0[1], minOf(r.end_at, d.date));
+        const w = Math.max(16, (b - a) * ppm - 2);
+        const late = isToday(d) && r.status === 'confirmed' && nm - minOf(r.start_at, d.date) > 10;
+        const txt = w >= 120 ? `<b>${timeOf(r.start_at)}</b> ${esc(r.name)} · ${r.party_size}` : w >= 56 ? `${esc(r.name.split(' ')[0])} · ${r.party_size}` : `${r.party_size}`;
+        const tip = `${timeOf(r.start_at)} ${r.name}, ${r.party_size} os.${r.notes ? ' · ' + r.notes : ''}`;
+        return `<div class="blk ${r.status}${late ? ' late' : ''}${S.sel === r.id ? ' sel' : ''}" data-rid="${r.id}" data-d="${i}" style="left:${g.x + (a - r0[0]) * ppm}px;width:${w}px" title="${esc(tip)}">${txt}${r.notes ? '<i class="nd"></i>' : ''}</div>`;
+      }).join('');
+    }).join('');
+    rows += `<div class="tlr"><div class="tln"><b>${esc(t.name)}</b><small>${t.min_seats}–${t.max_seats}</small></div><div class="tll" data-tid="${t.id}" style="width:${total}px">${blocks}</div></div>`;
+  });
+
+  const keepL = sc.scrollLeft, keepT = sc.scrollTop;
+  sc.innerHTML = `<div class="tlin" style="width:${NAME + total}px"><div class="tlhead"><div class="tlcorner"></div>${head}</div><div class="tlbody"><div class="tlgl" style="width:${total}px">${gl}</div>${rows}</div></div>`;
+  const ti = days.findIndex(isToday), r0 = ti >= 0 ? ranges[ti] : null;
+  if (S.tlFresh && sc.clientWidth) {
+    // Prvi izris: drsnik na "zdaj" (če je danes v obdobju), sicer na začetek.
+    sc.scrollLeft = r0 && nm >= r0[0] && nm <= r0[1] ? Math.max(0, geo[ti].x + (nm - r0[0]) * ppm - sc.clientWidth * .3) : 0;
+    S.tlFresh = false;
+  } else { sc.scrollLeft = keepL; sc.scrollTop = keepT; }
+  S.tlNowX = r0 && nm >= r0[0] && nm <= r0[1] ? geo[ti].x + (nm - r0[0]) * ppm : null;
+
+  $$('#tlscroll .blk').forEach(b => b.onclick = e => { e.stopPropagation(); resModal(days[+b.dataset.d].reservations.find(y => y.id === +b.dataset.rid)); });
+  $$('#tlscroll .tll').forEach(l => l.onclick = e => {
+    const t = S.day.tables.find(y => +y.id === +l.dataset.tid), px = e.clientX - l.getBoundingClientRect().left;
+    const i = geo.findIndex((g, k) => ranges[k] && px >= g.x && px < g.x + g.w); if (i < 0) return;
+    const m = Math.round((ranges[i][0] + (px - geo[i].x) / ppm) / 15) * 15;
+    resModal({ date: days[i].date, time: fromMin(m % 1440), party_size: Math.min(2, t.max_seats), table_ids: [t.id], zone_pref: t.zone });
+  });
+  $$('#tlscroll .tld').forEach(h => h.onclick = () => { S.date = h.dataset.date; S.minute = null; S.tlFresh = true; if (matchMedia('(max-width:1180px)').matches) S.tab = 'list'; viewDay(); });
+}
+
 /* Seznam rezervacij je razdeljen po tem, kaj mora natakar narediti zdaj (danes):
    zamuja, prihaja v 60 min, za mizo, kasneje; zaključeno je zloženo. */
 const DONE = ['completed', 'no_show', 'cancelled'];
@@ -400,7 +492,7 @@ function resModal(r = {}) {
     try {
       if (isEdit) await api('reservations/update', { id: r.id, ...d }); else await api('reservations/create', d);
       toast(isEdit ? 'Shranjeno' : 'Rezervacija ustvarjena'); md.close();
-      if (S.view === 'pregled' && d.date !== S.date) { S.date = d.date; S.minute = toMin(d.time); viewDay(); } else refreshCurrent();
+      if (S.view === 'pregled' && (d.date < S.date || d.date > addDays(S.date, S.tlDays - 1))) { S.date = d.date; S.minute = toMin(d.time); viewDay(); } else refreshCurrent();
     } catch (e) {
       if (e.data?.error === 'table_busy' && confirm(e.message + ' Vseeno shranim (dvojna zasedba)?')) return save(true);
       const alts = e.data?.alternatives?.length ? ' Prosto: ' + e.data.alternatives.map(a => (a.date !== d.date ? a.date + ' ' : '') + a.time).join(', ') : '';

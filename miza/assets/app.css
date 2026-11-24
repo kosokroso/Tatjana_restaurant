@@ -108,7 +108,8 @@ label.check{flex-direction:row;align-items:center;gap:8px;font-size:14px}
 .pill.cancelled{color:var(--muted);text-decoration:line-through}
 
 /* pregled dneva */
-.day{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px;align-items:start}
+.day{display:flex;flex-direction:column;gap:16px;min-width:0}
+.dtop{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px;align-items:start}
 .dcol{display:flex;flex-direction:column;gap:16px;min-width:0}
 .plan-wrap{padding:14px;overflow:auto}
 .plan-fit{position:relative;overflow:hidden}
@@ -169,20 +170,46 @@ details.done[open]>summary::after{transform:rotate(-135deg);margin-top:3px}
 .meta.note{align-items:flex-start;color:var(--ink)}
 .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 
-/* časovnica */
-.tl{padding:14px;overflow:auto}
-.tl table{border-collapse:collapse;min-width:100%}
-.tl td,.tl th{border-bottom:1px solid var(--line);padding:0;height:36px}
-.tl th{font:600 13px var(--mono);text-align:left;padding:0 10px;white-space:nowrap;position:sticky;left:0;background:var(--surface);z-index:2;width:70px}
-.tl .lane{position:relative;min-width:720px;height:36px;margin:0 22px}
-.tl .lane.hours{height:22px}
-.tl .blk{position:absolute;top:4px;bottom:4px;border-radius:4px;background:var(--amber-soft);border:1px solid var(--amber-b);font-size:11.5px;padding:3px 6px;overflow:hidden;white-space:nowrap;cursor:pointer;color:var(--ink)}
+/* časovnica: mize v vrsticah, čas vodoravno, več dni v isti osi */
+.tl{overflow:hidden}
+.tlbar{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.tlbar .grow{flex:1}
+.rseg{display:inline-flex;background:var(--sunk);border-radius:6px;padding:2px}
+.rseg button{min-height:32px;padding:0 13px;border:0;background:none;border-radius:5px;font-weight:500;color:var(--ink2);cursor:pointer}
+.rseg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(21,33,28,.18)}
+.tlscroll{overflow:auto;max-height:calc(100vh - 210px);min-height:160px;position:relative;overscroll-behavior:contain}
+.tlin{position:relative}
+.tlhead{display:flex;position:sticky;top:0;z-index:5;height:52px;background:var(--surface);border-bottom:1px solid var(--line2)}
+.tlcorner{position:sticky;left:0;z-index:6;flex:none;width:78px;background:var(--surface);border-right:1px solid var(--line)}
+.tld{position:relative;flex:none;border-left:1px solid var(--line2);cursor:pointer}
+.tld:hover{background:#f8f9f6}
+.tld-h{position:sticky;left:78px;width:max-content;display:flex;align-items:baseline;gap:8px;height:30px;padding:6px 8px 0;white-space:nowrap}
+.tld-h b{font-size:13.5px}
+.tld.today .tld-h b{color:var(--brand)}
+.tld.today .tld-h b::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--brand);margin-right:6px;vertical-align:1px}
+.tld-h span{font-size:11.5px;color:var(--muted)}
+.tld-t{position:relative;height:22px}
+.tld-t span{position:absolute;top:3px;padding-left:4px;font:11px var(--mono);color:var(--muted)}
+.tlbody{position:relative}
+.tlgl{position:absolute;top:0;bottom:0;left:78px;pointer-events:none;z-index:0}
+.tlgl i{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.tlgl i.day{background:var(--line2)}
+.tlgl i.closed{width:auto;background:repeating-linear-gradient(135deg,#f1f2ee 0 6px,#e7e9e4 6px 12px)}
+.tlgl i.now{width:2px;background:var(--alert);z-index:1}
+.tlr{position:relative;z-index:1;display:flex;height:44px;border-bottom:1px solid var(--line)}
+.tln{position:sticky;left:0;z-index:3;flex:none;width:78px;display:flex;flex-direction:column;justify-content:center;padding:0 10px;background:var(--surface);border-right:1px solid var(--line)}
+.tln b{font:600 14px var(--mono)}
+.tln small{font:10.5px var(--mono);color:var(--muted)}
+.tll{position:relative;flex:none;cursor:cell}
+.tlz{position:relative;z-index:1;height:24px;display:flex;align-items:center;background:var(--sunk);border-bottom:1px solid var(--line);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink2)}
+.tlz span{position:sticky;left:10px}
+.tl .blk{position:absolute;top:5px;bottom:5px;display:flex;align-items:center;gap:4px;border-radius:5px;background:var(--amber-soft);border:1px solid var(--amber-b);font-size:12px;line-height:1.1;padding:0 6px;overflow:hidden;white-space:nowrap;cursor:pointer;color:var(--ink)}
+.tl .blk b{font-family:var(--mono);font-weight:600}
 .tl .blk.seated{background:var(--brand);border-color:var(--brand-d);color:#fff}
 .tl .blk.completed{background:var(--sunk);border-color:var(--line2);color:var(--ink2)}
-.tl .hours{position:relative;height:22px}
-.tl .hours span{position:absolute;font:11px var(--mono);color:var(--muted);transform:translateX(-50%)}
-.tl .now{position:absolute;top:0;bottom:0;width:2px;background:var(--alert);z-index:1}
-.tl .grid{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.tl .blk.late{border-color:var(--alert);box-shadow:inset 0 0 0 1px var(--alert)}
+.tl .blk.sel{outline:2px solid var(--ink);outline-offset:1px;z-index:2}
+.tl .blk .nd{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--alert)}
 
 /* urejevalnik tlorisa */
 .editor{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
@@ -249,7 +276,7 @@ code.key{background:var(--sunk);padding:7px 10px;border-radius:6px;font:12.5px v
 
 /* tablica in manjši namizni zasloni */
 @media (max-width:1180px){
-  .day,.editor{grid-template-columns:1fr}
+  .dtop,.editor{grid-template-columns:1fr}
   .list{position:static;max-height:none}
   .kanban{grid-template-columns:repeat(2,1fr)}
   /* ena podokno naenkrat: seznam, mize ali časovnica */
@@ -257,6 +284,7 @@ code.key{background:var(--sunk);padding:7px 10px;border-radius:6px;font:12.5px v
   .day .pane{display:none}
   .day[data-tab=list] .pane-list,.day[data-tab=plan] .pane-plan,.day[data-tab=time] .pane-time{display:block}
   .dcol{display:contents}
+  .day[data-tab=time] .dtop{display:none}
 }
 
 /* telefon in tablica ob pokončnem: spodnja vrstica, en stolpec */
@@ -296,7 +324,6 @@ code.key{background:var(--sunk);padding:7px 10px;border-radius:6px;font:12.5px v
 @media (max-width:699px){
   .plan-fit{display:none}
   .tgrid{display:grid}
-  .tl{padding:10px}
   .mitem{grid-template-columns:1fr auto auto}
   .mitem .btn{grid-column:1/-1}
   .card.pad{overflow-x:auto}

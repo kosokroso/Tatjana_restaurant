@@ -30,6 +30,9 @@ Lokalno preizkušeno na 1440, 1024 in 390 px; čaka na deploy.
 - **P0-4 (del):** rezervacija brez "Prišli" po 10 min dobi oznako "zamuja N min" in klic z enim dotikom. Predlog "Ni prišel" po 30 min še ni narejen.
 - "Prekliči" ni več gumb v vrstici (je v oknu Uredi), da ga ni mogoče sprožiti z naključnim dotikom.
 
+### Časovnica (24. 11. 2026, kasneje isti večer)
+Čez celo širino strani, pod tlorisom in seznamom. Preklop **Dan / 3 dni / Teden** (zapomni se na napravi). Dnevi so v isti vodoravni osi, vsak z lastnim delovnim časom, zaprt dan je ozek. Imena miz, cone in dnevi so lepljivi pri drsenju. Ob odprtju drsi na "zdaj"; gumb "Zdaj". Glava dne kaže število rezervacij in gostov; klik nanjo odpre ta dan. Klik na prazno vrstico odpre novo rezervacijo z izpolnjenim dnem, uro (na 15 min) in mizo. Zamujajoče rezervacije imajo rdeč rob, opombe rdečo piko. Nepreizkušeno: več kot 7 dni, tisoče rezervacij (vsak klic `day` je ločen, teden = 7 klicev na 20 s).
+
 ### P0: pred pilotom (brez tega osebje portala ne bo uporabljalo)
 
 1. **Telefon in tablica.** Obrazec "Nova rezervacija" se na telefonu odpre napol izven zaslona; meni zgoraj zasede tretjino zaslona; tabela rezervacij se ne prilega (vodoravno drsenje); tloris je pomanjšan do neberljivosti. Predlog: na zaslonih pod 900 px namesto tlorisa seznam **"Prihodi"** (velike vrstice, en dotik = Prišli), meni kot spodnja vrstica z 4 ikonami, obrazec čez cel zaslon.
