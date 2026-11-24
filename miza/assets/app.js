@@ -1,0 +1,620 @@
+'use strict';
+/* Tatjana Miza · admin aplikacija (brez ogrodij) */
+
+const S = { me: null, view: 'pregled', date: today(), minute: null, day: null, sel: null, selTable: null };
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const eur = c => (c / 100).toLocaleString('sl-SI', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+const DAYS = ['', 'Ponedeljek', 'Torek', 'Sreda', 'Četrtek', 'Petek', 'Sobota', 'Nedelja'];
+const ST_RES = { confirmed: 'Potrjena', seated: 'Za mizo', completed: 'Zaključena', no_show: 'Ni prišel', cancelled: 'Preklicana' };
+const ST_ORD = { new: 'Nova', preparing: 'V pripravi', ready: 'Pripravljeno', picked_up: 'Prevzeto', cancelled: 'Preklicano' };
+const SRC = { tatjana: 'Tatjana', manual: 'Ročno', web: 'Splet' };
+
+function today() { const d = new Date(); return ymd(d); }
+function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function addDays(s, n) { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d); }
+function toMin(hm) { const [h, m] = hm.split(':').map(Number); return h * 60 + m; }
+function fromMin(m) { m = Math.max(0, m); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+function timeOf(dt) { return dt.slice(11, 16); }
+function minOf(dt, baseDate) { let m = toMin(timeOf(dt)); if (dt.slice(0, 10) > baseDate) m += 1440; return m; }
+function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+function dateLabel(s) { const d = new Date(s + 'T12:00:00'); return DAYS[d.getDay() || 7] + ', ' + d.getDate() + '. ' + (d.getMonth() + 1) + '.'; }
+
+async function api(route, data = {}) {
+  const r = await fetch('api.php?r=' + route, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-TM': '1' }, body: JSON.stringify(data), credentials: 'same-origin' });
+  let j; try { j = await r.json(); } catch { j = { ok: false, message: 'Napaka strežnika' }; }
+  if (r.status === 401 && route !== 'auth/login') { S.me = null; renderLogin(); throw new Error('unauth'); }
+  if (!j.ok) { const e = new Error(j.message || 'Napaka'); e.data = j; throw e; }
+  return j;
+}
+function toast(msg, err = false) {
+  const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg;
+  document.body.appendChild(t); setTimeout(() => t.remove(), 3200);
+}
+function modal(title, body, foot = '') {
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal"><div class="mh"><h2>${esc(title)}</h2><button class="btn ghost" data-x>✕</button></div><div class="mb">${body}</div>${foot ? `<div class="mf">${foot}</div>` : ''}</div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  bg.addEventListener('mousedown', e => { if (e.target === bg) close(); });
+  $('[data-x]', bg).onclick = close;
+  return { el: bg, close };
+}
+function debounce(fn, ms = 300) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+/* ---------------- prijava in ogrodje ---------------- */
+async function boot() {
+  try { const me = await api('auth/me'); S.me = me; window.addEventListener('hashchange', route); route(); }
+  catch (e) { if (e.message !== 'unauth') renderLogin(); }
+}
+function renderLogin() {
+  stopPolling();
+  $('#app').innerHTML = `<div class="auth-wrap"><form class="card auth-card" id="lf">
+    <h1>Tatjana <span>Miza</span></h1><p class="muted">Rezervacije in prevzemi z AI asistentko</p>
+    <div id="lerr"></div>
+    <label>E-naslov<input name="email" type="email" required autofocus></label>
+    <label>Geslo<input name="password" type="password" required></label>
+    <button class="btn primary">Prijava</button></form></div>`;
+  $('#lf').onsubmit = async e => {
+    e.preventDefault();
+    try { await api('auth/login', Object.fromEntries(new FormData(e.target))); boot(); }
+    catch (err) { $('#lerr').innerHTML = `<div class="alert">${esc(err.message)}</div>`; }
+  };
+}
+const NAV = [
+  ['pregled', 'Pregled dneva', '◷'], ['rezervacije', 'Rezervacije', '☰'], ['narocila', 'Naročila za prevzem', '🛍'],
+  ['tloris', 'Tloris miz', '▦'], ['meni', 'Meni', '🍽'], ['nastavitve', 'Nastavitve', '⚙'],
+];
+function shell() {
+  if (!$('.shell')) {
+    $('#app').innerHTML = `<div class="shell"><nav class="side"><h1>Tatjana <span>Miza</span></h1>
+      ${NAV.map(([k, t, i]) => `<a href="#${k}" data-nav="${k}"><span>${i}</span>${t}${k === 'narocila' ? '<span class="badge" id="obadge" hidden></span>' : ''}</a>`).join('')}
+      <div class="foot"><b>${esc(S.me.restaurant.name)}</b>${esc(S.me.user.email)}<br><a href="#" id="logout" style="padding:6px 0;color:#cfc7bd">Odjava</a></div>
+    </nav><main class="main" id="main"></main></div>`;
+    $('#logout').onclick = async e => { e.preventDefault(); await api('auth/logout'); location.hash = ''; renderLogin(); };
+  }
+  $$('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === S.view));
+  return $('#main');
+}
+function route() {
+  S.view = (location.hash.slice(1) || 'pregled');
+  if (!NAV.find(n => n[0] === S.view)) S.view = 'pregled';
+  if (S.view !== 'narocila') stopPolling();
+  shell();
+  ({ pregled: viewDay, rezervacije: viewList, narocila: viewOrders, tloris: viewEditor, meni: viewMenu, nastavitve: viewSettings })[S.view]();
+  startBadgePoll();
+}
+
+/* ---------------- tloris (skupni izris) ---------------- */
+function planSize(tables) {
+  let w = 900, h = 520;
+  tables.forEach(t => { w = Math.max(w, +t.x + +t.w + 80); h = Math.max(h, +t.y + +t.h + 80); });
+  return [w, h];
+}
+function tableState(t, minute) {
+  if (!S.day) return { cls: '', sub: '' };
+  const rs = S.day.reservations.filter(r => ['confirmed', 'seated'].includes(r.status) && r.tables.some(x => +x.id === +t.id));
+  const cur = rs.find(r => minOf(r.start_at, S.day.date) <= minute && minute < minOf(r.end_at, S.day.date));
+  if (cur) return { cls: cur.status === 'seated' ? 'seated' : 'res', sub: `${esc(cur.name)} · ${cur.party_size}`, res: cur };
+  const next = rs.filter(r => minOf(r.start_at, S.day.date) > minute).sort((a, b) => a.start_at.localeCompare(b.start_at))[0];
+  if (next && minOf(next.start_at, S.day.date) - minute <= 120) return { cls: '', sub: 'ob ' + timeOf(next.start_at) };
+  return { cls: '', sub: '' };
+}
+function tableHTML(t, extra = '', sub = '') {
+  return `<div class="tbl ${t.shape === 'round' ? 'round' : ''} ${+t.reservable ? '' : 'off'} ${extra}" data-tid="${t.id ?? t._k}"
+    style="left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px"><b>${esc(t.name)}</b><span class="sub">${sub || (t.min_seats + ' do ' + t.max_seats + ' oseb')}</span><span class="rz"></span></div>`;
+}
+
+/* ---------------- pregled dneva ---------------- */
+async function viewDay() {
+  const m = shell();
+  m.innerHTML = `<div class="top"><h2 class="grow">Pregled dneva</h2>
+    <div class="datenav"><button class="btn" id="dprev">‹</button><input type="date" id="ddate" value="${S.date}"><button class="btn" id="dnext">›</button><button class="btn" id="dtoday">Danes</button></div>
+    <button class="btn primary" id="newres">+ Nova rezervacija</button></div>
+    <div class="day"><div><div class="card plan-wrap"><div id="plan"></div>
+      <div class="slider"><span class="muted small">Čas</span><input type="range" id="tslider" step="15"><b id="tlabel"></b></div>
+      <div class="legend"><span><i style="background:var(--free);border-color:var(--free-b)"></i>Prosto</span><span><i style="background:var(--res);border-color:var(--res-b)"></i>Rezervirano</span><span><i style="background:var(--seat);border-color:var(--seat-b)"></i>Gostje za mizo</span><span><i style="background:var(--off);border-color:var(--off-b)"></i>Ni za rezervacije</span></div>
+    </div><div class="card tl pad" id="timeline"></div></div>
+    <div class="card list" id="rlist"></div></div>`;
+  $('#ddate').onchange = e => { S.date = e.target.value; S.minute = null; loadDay(); };
+  $('#dprev').onclick = () => { S.date = addDays(S.date, -1); S.minute = null; viewDay(); };
+  $('#dnext').onclick = () => { S.date = addDays(S.date, 1); S.minute = null; viewDay(); };
+  $('#dtoday').onclick = () => { S.date = today(); S.minute = null; viewDay(); };
+  $('#newres').onclick = () => resModal({ date: S.date, time: S.minute != null ? fromMin(S.minute) : '19:00' });
+  await loadDay();
+}
+async function loadDay() {
+  S.day = await api('day', { date: S.date });
+  const hrs = S.day.hours.length ? S.day.hours : [['12:00', '22:00']];
+  const lo = toMin(hrs[0][0]), hi = Math.max(...hrs.map(h => { let c = toMin(h[1]); if (c <= toMin(h[0])) c += 1440; return c; }));
+  S.range = [lo, hi];
+  if (S.minute == null) S.minute = S.date === today() ? Math.min(hi, Math.max(lo, Math.round(nowMin() / 15) * 15)) : Math.min(hi, lo + 7 * 60);
+  const sl = $('#tslider'); if (!sl) return;
+  sl.min = lo; sl.max = hi; sl.value = S.minute;
+  sl.oninput = e => { S.minute = +e.target.value; drawPlan(); };
+  drawPlan(); drawTimeline(); drawList();
+}
+function drawPlan() {
+  const tables = S.day.tables, [w, h] = planSize(tables);
+  $('#tlabel').textContent = fromMin(S.minute);
+  const highlight = S.sel ? S.day.reservations.find(r => r.id === S.sel)?.tables.map(t => +t.id) || [] : [];
+  $('#plan').innerHTML = `<div class="plan" style="width:${w}px;height:${h}px">${tables.map(t => {
+    const st = tableState(t, S.minute);
+    return tableHTML(t, st.cls + (highlight.includes(+t.id) ? ' sel' : ''), st.sub);
+  }).join('')}</div>`;
+  $$('#plan .tbl').forEach(el => el.onclick = () => {
+    const t = tables.find(x => +x.id === +el.dataset.tid);
+    const st = tableState(t, S.minute);
+    if (st.res) { S.sel = st.res.id; drawPlan(); drawList(); scrollToRes(st.res.id); }
+    else resModal({ date: S.date, time: fromMin(S.minute), party_size: Math.min(2, t.max_seats), table_ids: [t.id], zone_pref: t.zone });
+  });
+}
+function scrollToRes(id) { const el = $(`.ritem[data-rid="${id}"]`); el && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+function drawTimeline() {
+  const [lo, hi] = S.range, span = hi - lo, pct = m => ((m - lo) / span * 100) + '%';
+  const hours = []; for (let m = Math.ceil(lo / 60) * 60; m <= hi; m += 60) hours.push(m);
+  const nm = S.date === today() ? nowMin() : -1;
+  const rows = S.day.tables.map(t => {
+    const blocks = S.day.reservations.filter(r => !['cancelled', 'no_show'].includes(r.status) && r.tables.some(x => +x.id === +t.id)).map(r => {
+      const a = Math.max(lo, minOf(r.start_at, S.date)), b = Math.min(hi, minOf(r.end_at, S.date));
+      return `<div class="blk ${r.status}" data-rid="${r.id}" style="left:${pct(a)};width:calc(${(b - a) / span * 100}% - 2px)" title="${esc(r.name)}">${timeOf(r.start_at)} ${esc(r.name)} · ${r.party_size}</div>`;
+    }).join('');
+    return `<tr><th>${esc(t.name)}</th><td><div class="lane">${hours.map(m => `<div class="grid" style="left:${pct(m)}"></div>`).join('')}${nm >= lo && nm <= hi ? `<div class="now" style="left:${pct(nm)}"></div>` : ''}${blocks}</div></td></tr>`;
+  }).join('');
+  $('#timeline').innerHTML = `<h3 style="margin-bottom:8px">Časovnica miz</h3><table><tr><th></th><td><div class="lane hours">${hours.map(m => `<span style="left:${pct(m)}">${fromMin(m)}</span>`).join('')}</div></td></tr>${rows}</table>`;
+  $$('#timeline .blk').forEach(b => b.onclick = () => { const r = S.day.reservations.find(x => x.id === +b.dataset.rid); resModal(r); });
+}
+function resItem(r) {
+  const acts = [];
+  if (r.status === 'confirmed') acts.push(['seated', 'Prišli'], ['no_show', 'Ni prišel']);
+  if (r.status === 'seated') acts.push(['completed', 'Odšli']);
+  if (['confirmed', 'seated'].includes(r.status)) acts.push(['edit', 'Uredi'], ['cancelled', 'Prekliči']);
+  if (['completed', 'no_show', 'cancelled'].includes(r.status)) acts.push(['confirmed', 'Obnovi']);
+  return `<div class="ritem ${r.status} ${S.sel === r.id ? 'sel' : ''}" data-rid="${r.id}">
+    <div class="row"><span class="t">${timeOf(r.start_at)}</span><b>${esc(r.name)}</b><span class="muted">${r.party_size} os.</span><span style="margin-left:auto" class="pill ${r.status}">${ST_RES[r.status]}</span></div>
+    <div class="meta">Miza ${r.tables.map(t => esc(t.name)).join(' + ') || '?'} ${r.phone ? '· ' + esc(r.phone) : ''} <span class="pill ${r.source}">${SRC[r.source] || r.source}</span></div>
+    ${r.notes ? `<div class="meta">📝 ${esc(r.notes)}</div>` : ''}
+    <div class="acts">${acts.map(([k, l]) => `<button class="btn sm ${k === 'cancelled' ? 'danger' : ''}" data-act="${k}">${l}</button>`).join('')}</div></div>`;
+}
+function drawList() {
+  const rs = S.day.reservations, active = rs.filter(r => ['confirmed', 'seated'].includes(r.status));
+  const guests = active.reduce((s, r) => s + r.party_size, 0);
+  const ords = S.day.orders.filter(o => o.status !== 'cancelled');
+  $('#rlist').innerHTML = `<div class="sec">${dateLabel(S.date)} · ${active.length} rezervacij · ${guests} gostov</div>
+    ${rs.length ? rs.map(resItem).join('') : '<div class="empty">Ni rezervacij za ta dan.</div>'}
+    <div class="sec">Prevzemi · ${ords.length}</div>
+    ${ords.length ? ords.map(o => `<div class="ritem" onclick="location.hash='narocila'"><div class="row"><span class="t">${timeOf(o.pickup_at)}</span><b>${esc(o.name)}</b><span class="muted">#${esc(o.code)}</span><span style="margin-left:auto" class="pill">${ST_ORD[o.status]}</span></div><div class="meta">${o.items.map(i => i.qty + '× ' + esc(i.name)).join(', ')}</div></div>`).join('') : '<div class="empty">Ni naročil.</div>'}`;
+  $$('#rlist .ritem[data-rid]').forEach(el => {
+    const r = rs.find(x => x.id === +el.dataset.rid);
+    el.onclick = e => {
+      const act = e.target.dataset.act;
+      if (!act) { S.sel = S.sel === r.id ? null : r.id; if (S.sel) S.minute = Math.max(S.range[0], minOf(r.start_at, S.date)); $('#tslider').value = S.minute; drawPlan(); drawList(); return; }
+      e.stopPropagation();
+      if (act === 'edit') return resModal(r);
+      if (act === 'cancelled' && !confirm(`Prekličem rezervacijo ${r.name}?`)) return;
+      setResStatus(r.id, act);
+    };
+  });
+}
+async function setResStatus(id, status) {
+  try { await api('reservations/status', { id, status }); toast(ST_RES[status]); refreshCurrent(); }
+  catch (e) { toast(e.message, true); }
+}
+function refreshCurrent() { if (S.view === 'pregled') loadDay(); else if (S.view === 'rezervacije') viewList(); }
+
+/* ---------------- modal rezervacije ---------------- */
+function resModal(r = {}) {
+  const isEdit = !!r.id;
+  const v = {
+    date: r.start_at ? r.start_at.slice(0, 10) : (r.date || S.date),
+    time: r.start_at ? timeOf(r.start_at) : (r.time || '19:00'),
+    party_size: r.party_size || 2, name: r.name || '', phone: r.phone || '', email: r.email || '', notes: r.notes || '',
+    zone_pref: r.zone_pref || '', table_ids: r.table_ids || (isEdit ? [] : []),
+  };
+  const tables = (S.day && S.day.tables) || S.tablesCache || [];
+  const zones = S.me.settings.zones || [];
+  const dur = isEdit ? Math.round((new Date(r.end_at.replace(' ', 'T')) - new Date(r.start_at.replace(' ', 'T'))) / 60000) : '';
+  const curTables = isEdit ? r.tables.map(t => +t.id) : v.table_ids.map(Number);
+  const md = modal(isEdit ? 'Uredi rezervacijo' : 'Nova rezervacija', `
+    <div class="grid3"><label>Datum<input type="date" name="date" value="${v.date}"></label><label>Ura<input type="time" name="time" step="900" value="${v.time}"></label><label>Osebe<input type="number" name="party_size" min="1" value="${v.party_size}"></label></div>
+    <div class="grid2"><label>Ime<input name="name" value="${esc(v.name)}" required></label><label>Telefon<input name="phone" value="${esc(v.phone)}"></label></div>
+    <div class="grid3"><label>Cona<select name="zone_pref"><option value="">Vseeno</option>${zones.map(z => `<option ${z === v.zone_pref ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>
+      <label>Miza<select name="table" ${tables.length ? '' : 'disabled'}><option value="">Samodejno</option>${tables.map(t => `<option value="${t.id}" ${curTables.length === 1 && curTables[0] === +t.id ? 'selected' : ''}>${esc(t.name)} (${t.min_seats} do ${t.max_seats})</option>`).join('')}${curTables.length > 1 ? `<option value="keep" selected>${r.tables.map(t => esc(t.name)).join(' + ')}</option>` : ''}</select></label>
+      <label>Trajanje (min)<input type="number" name="duration_minutes" min="15" step="15" value="${dur}" placeholder="privzeto"></label></div>
+    <label>E-pošta<input name="email" type="email" value="${esc(v.email)}"></label>
+    <label>Opombe (alergije, rojstni dan, voziček…)<textarea name="notes" rows="2">${esc(v.notes)}</textarea></label>
+    <div class="avail" id="avail">Preverjam…</div>`,
+    `${isEdit ? '<button class="btn danger" data-del style="margin-right:auto">Prekliči rezervacijo</button>' : ''}<button class="btn" data-x2>Zapri</button><button class="btn primary" data-save>${isEdit ? 'Shrani' : 'Rezerviraj'}</button>`);
+  const f = n => $(`[name=${n}]`, md.el);
+  const data = () => {
+    const d = { date: f('date').value, time: f('time').value, party_size: +f('party_size').value, name: f('name').value.trim(), phone: f('phone').value.trim(), email: f('email').value.trim(), notes: f('notes').value.trim(), zone_pref: f('zone_pref').value || null };
+    const tv = f('table').value;
+    if (tv === 'keep') d.table_ids = curTables; else if (tv) d.table_ids = [+tv];
+    if (f('duration_minutes').value) d.duration_minutes = +f('duration_minutes').value;
+    return d;
+  };
+  const check = debounce(async () => {
+    const d = data(); const box = $('#avail', md.el);
+    if (!d.date || !d.time || !d.party_size) return;
+    if (d.table_ids) {
+      const t = tables.filter(x => d.table_ids.includes(+x.id));
+      const cap = t.reduce((s, x) => s + +x.max_seats, 0);
+      box.className = 'avail' + (cap < d.party_size ? ' no' : '');
+      box.textContent = cap < d.party_size ? `Izbrana miza ima samo ${cap} mest.` : `Ročno izbrana miza ${t.map(x => x.name).join(' + ')}. Zasedenost se preveri ob shranjevanju.`;
+      return;
+    }
+    try {
+      const a = await api('availability', { date: d.date, time: d.time, party_size: d.party_size, zone: d.zone_pref, exclude_id: r.id });
+      box.className = 'avail ' + (a.available ? 'yes' : 'no');
+      box.textContent = a.available ? `Prosto: miza ${a.tables.map(t => t.name).join(' + ')} · ${a.duration_minutes} min` : a.message;
+    } catch (e) { box.className = 'avail no'; box.textContent = e.message; }
+  });
+  $$('input,select', md.el).forEach(i => i.addEventListener('input', check)); check();
+  $('[data-x2]', md.el).onclick = md.close;
+  if (isEdit) $('[data-del]', md.el).onclick = async () => { if (confirm('Prekličem rezervacijo?')) { await setResStatus(r.id, 'cancelled'); md.close(); } };
+  const save = async (force = false) => {
+    const d = data(); if (!d.name) return toast('Vpiši ime.', true);
+    if (force) d.force = 1;
+    try {
+      if (isEdit) await api('reservations/update', { id: r.id, ...d }); else await api('reservations/create', d);
+      toast(isEdit ? 'Shranjeno' : 'Rezervacija ustvarjena'); md.close();
+      if (S.view === 'pregled' && d.date !== S.date) { S.date = d.date; S.minute = toMin(d.time); viewDay(); } else refreshCurrent();
+    } catch (e) {
+      if (e.data?.error === 'table_busy' && confirm(e.message + ' Vseeno shranim (dvojna zasedba)?')) return save(true);
+      const alts = e.data?.alternatives?.length ? ' Prosto: ' + e.data.alternatives.map(a => (a.date !== d.date ? a.date + ' ' : '') + a.time).join(', ') : '';
+      toast(e.message + alts, true);
+    }
+  };
+  $('[data-save]', md.el).onclick = () => save();
+}
+
+/* ---------------- seznam rezervacij ---------------- */
+async function viewList() {
+  const m = shell();
+  S.lf = S.lf || { from: today(), to: addDays(today(), 30), q: '' };
+  m.innerHTML = `<div class="top"><h2 class="grow">Rezervacije</h2>
+    <label>Od<input type="date" id="lfrom" value="${S.lf.from}"></label><label>Do<input type="date" id="lto" value="${S.lf.to}"></label>
+    <label>Iskanje<input id="lq" placeholder="ime, telefon, koda" value="${esc(S.lf.q)}"></label>
+    <button class="btn primary" id="newres" style="align-self:flex-end">+ Nova</button></div><div class="card" id="ltbl"><div class="empty">Nalagam…</div></div>`;
+  const load = async () => {
+    const j = await api('reservations/list', S.lf);
+    const rs = j.reservations;
+    $('#ltbl').innerHTML = rs.length ? `<table class="simple"><tr><th>Datum</th><th>Ura</th><th>Ime</th><th>Osebe</th><th>Miza</th><th>Telefon</th><th>Vir</th><th>Status</th><th>Koda</th></tr>
+      ${rs.map(r => `<tr data-rid="${r.id}" style="cursor:pointer"><td>${dateLabel(r.start_at.slice(0, 10))}</td><td><b>${timeOf(r.start_at)}</b></td><td>${esc(r.name)}${r.notes ? ' <span title="' + esc(r.notes) + '">📝</span>' : ''}</td><td>${r.party_size}</td><td>${r.tables.map(t => esc(t.name)).join(' + ')}</td><td>${esc(r.phone || '')}</td><td><span class="pill ${r.source}">${SRC[r.source] || r.source}</span></td><td><span class="pill ${r.status}">${ST_RES[r.status]}</span></td><td class="muted">${esc(r.code)}</td></tr>`).join('')}</table>`
+      : '<div class="empty">Ni rezervacij v tem obdobju.</div>';
+    $$('#ltbl tr[data-rid]').forEach(tr => tr.onclick = async () => { await ensureTables(); resModal(rs.find(r => r.id === +tr.dataset.rid)); });
+  };
+  const upd = debounce(() => { S.lf = { from: $('#lfrom').value, to: $('#lto').value, q: $('#lq').value.trim() }; load(); });
+  ['#lfrom', '#lto', '#lq'].forEach(s => $(s).addEventListener('input', upd));
+  $('#newres').onclick = async () => { await ensureTables(); resModal({ date: today() }); };
+  load();
+}
+async function ensureTables() { if (!S.tablesCache) S.tablesCache = (await api('tables')).tables; S.day = null; }
+
+/* ---------------- urejevalnik tlorisa ---------------- */
+async function viewEditor() {
+  const m = shell();
+  const j = await api('tables');
+  S.ed = { tables: j.tables.map(t => ({ ...t })), sel: null, dirty: false, k: 1 };
+  m.innerHTML = `<div class="top"><h2 class="grow">Tloris miz</h2><span class="muted small" id="dirty"></span><button class="btn primary" id="esave">Shrani tloris</button></div>
+    <div class="editor"><div class="card plan-wrap"><div class="toolbar">
+      <button class="btn sm" data-add="square">+ Kvadratna miza</button><button class="btn sm" data-add="round">+ Okrogla miza</button><button class="btn sm" data-add="rect">+ Podolgovata miza</button>
+      <span class="muted small" style="align-self:center">Povleci mizo za premik, kvadratek v kotu za velikost.</span></div><div id="eplan"></div></div>
+    <div class="card pad" id="eprops"></div></div>`;
+  $$('[data-add]').forEach(b => b.onclick = () => {
+    const shape = b.dataset.add, n = S.ed.tables.length + 1;
+    const t = { _k: 'n' + (S.ed.k++), name: String(n), min_seats: shape === 'rect' ? 4 : 1, max_seats: shape === 'rect' ? 6 : shape === 'round' ? 2 : 4, zone: S.me.settings.zones[0] || '', shape, x: 40, y: 40, w: shape === 'rect' ? 160 : shape === 'round' ? 70 : 90, h: shape === 'rect' ? 80 : shape === 'round' ? 70 : 90, combine_group: '', reservable: 1, features: '', priority: 0 };
+    S.ed.tables.push(t); S.ed.sel = key(t); markDirty(); drawEditor();
+  });
+  $('#esave').onclick = saveEditor;
+  window.onbeforeunload = () => S.ed?.dirty ? 'Neshranjene spremembe' : undefined;
+  drawEditor();
+}
+const key = t => String(t.id ?? t._k);
+function markDirty() { S.ed.dirty = true; $('#dirty').textContent = 'Neshranjene spremembe'; }
+function drawEditor() {
+  const [w, h] = planSize(S.ed.tables);
+  $('#eplan').innerHTML = `<div class="plan edit" style="width:${w}px;height:${h}px">${S.ed.tables.map(t => tableHTML(t, key(t) === S.ed.sel ? 'sel' : '', (t.zone ? esc(t.zone) + ' · ' : '') + t.min_seats + ' do ' + t.max_seats)).join('')}</div>`;
+  const plan = $('#eplan .plan');
+  $$('.tbl', plan).forEach(el => {
+    el.onpointerdown = e => {
+      const t = S.ed.tables.find(x => key(x) === el.dataset.tid);
+      const resize = e.target.classList.contains('rz');
+      if (S.ed.sel !== key(t)) { S.ed.sel = key(t); drawEditor(); drawProps(); const nel = $(`#eplan .tbl[data-tid="${key(t)}"]`); return startDrag(nel, t, e, resize); }
+      startDrag(el, t, e, resize);
+    };
+  });
+  plan.onpointerdown = e => { if (e.target === plan) { S.ed.sel = null; drawEditor(); } };
+  drawProps();
+}
+function startDrag(el, t, e, resize) {
+  e.preventDefault();
+  const sx = e.clientX, sy = e.clientY, ox = +t.x, oy = +t.y, ow = +t.w, oh = +t.h, snap = v => Math.round(v / 10) * 10;
+  let moved = false;
+  const mv = ev => {
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+    if (resize) { t.w = Math.max(40, snap(ow + dx)); t.h = Math.max(40, snap(oh + dy)); if (t.shape === 'round') t.h = t.w; el.style.width = t.w + 'px'; el.style.height = t.h + 'px'; }
+    else { t.x = Math.max(0, snap(ox + dx)); t.y = Math.max(0, snap(oy + dy)); el.style.left = t.x + 'px'; el.style.top = t.y + 'px'; }
+  };
+  const up = () => { document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up); if (moved) { markDirty(); drawEditor(); } };
+  document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
+}
+function drawProps() {
+  const box = $('#eprops'); if (!box) return;
+  const t = S.ed.tables.find(x => key(x) === S.ed.sel);
+  const total = S.ed.tables.reduce((s, x) => s + +x.max_seats, 0);
+  if (!t) { box.innerHTML = `<h3>Lastnosti mize</h3><p class="muted">Izberi mizo na tlorisu ali dodaj novo.</p><p class="small muted">${S.ed.tables.length} miz · skupaj ${total} sedežev</p>
+    <p class="small muted"><b>Skupina združevanja</b>: mize z isto oznako (npr. A) lahko sistem združi za večjo skupino.</p>`; return; }
+  const zones = S.me.settings.zones || [];
+  box.innerHTML = `<div class="stack"><h3>Miza ${esc(t.name)}</h3>
+    <label>Ime ali številka<input data-p="name" value="${esc(t.name)}"></label>
+    <div class="grid2"><label>Najmanj oseb<input type="number" min="1" data-p="min_seats" value="${t.min_seats}"></label><label>Največ oseb<input type="number" min="1" data-p="max_seats" value="${t.max_seats}"></label></div>
+    <label>Cona<select data-p="zone"><option value="">(brez)</option>${zones.map(z => `<option ${z === t.zone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>
+    <label>Oblika<select data-p="shape">${[['square', 'Kvadratna'], ['round', 'Okrogla'], ['rect', 'Podolgovata']].map(([k, l]) => `<option value="${k}" ${k === t.shape ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label>Skupina združevanja<input data-p="combine_group" value="${esc(t.combine_group || '')}" placeholder="npr. A"></label>
+    <label>Posebnosti<input data-p="features" value="${esc(t.features || '')}" placeholder="ob oknu, separe, dostop z vozičkom"></label>
+    <label>Prednost pri dodelitvi<input type="number" data-p="priority" value="${t.priority || 0}"></label>
+    <label class="check"><input type="checkbox" data-p="reservable" ${+t.reservable ? 'checked' : ''}> Na voljo za rezervacije (Tatjana)</label>
+    <button class="btn danger" id="edel">Odstrani mizo</button></div>`;
+  $$('[data-p]', box).forEach(i => i.oninput = () => {
+    const p = i.dataset.p; t[p] = i.type === 'checkbox' ? (i.checked ? 1 : 0) : i.type === 'number' ? +i.value : i.value;
+    if (p === 'shape' && t.shape === 'round') t.h = t.w;
+    markDirty(); const sel = S.ed.sel; drawEditorPlanOnly(sel);
+  });
+  $('#edel').onclick = () => { S.ed.tables = S.ed.tables.filter(x => x !== t); S.ed.sel = null; markDirty(); drawEditor(); };
+}
+function drawEditorPlanOnly() {
+  // osveži samo tloris, da polje v lastnostih ne izgubi fokusa
+  const props = $('#eprops'), keep = props.innerHTML;
+  const f = document.activeElement?.dataset?.p;
+  drawEditor();
+  if (f) { const el = $(`[data-p="${f}"]`, props); if (el) { el.focus(); if (el.setSelectionRange && el.type === 'text') el.setSelectionRange(el.value.length, el.value.length); } }
+}
+async function saveEditor() {
+  const bad = S.ed.tables.find(t => +t.min_seats > +t.max_seats);
+  if (bad) return toast(`Miza ${bad.name}: najmanj oseb je več kot največ.`, true);
+  try {
+    const j = await api('tables/save', { tables: S.ed.tables });
+    S.ed.tables = j.tables; S.ed.dirty = false; S.ed.sel = null; S.tablesCache = null; $('#dirty').textContent = ''; drawEditor(); toast('Tloris shranjen');
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- naročila ---------------- */
+let pollT = null, badgeT = null;
+function stopPolling() { clearInterval(pollT); pollT = null; window.onbeforeunload = null; }
+function startBadgePoll() {
+  if (badgeT) return;
+  const tick = async () => {
+    try {
+      const j = await api('orders', { date: today() });
+      const n = j.orders.filter(o => o.status === 'new').length;
+      const b = $('#obadge'); if (b) { b.hidden = !n; b.textContent = n; }
+      if (S.lastOrderId != null && j.latest_id > S.lastOrderId) { beep(); if (S.view !== 'narocila') toast('Novo naročilo za prevzem'); }
+      S.lastOrderId = j.latest_id;
+    } catch { }
+  };
+  tick(); badgeT = setInterval(tick, 15000);
+}
+let actx = null;
+function beep() {
+  if (!actx) return;
+  [0, .18].forEach(d => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.setValueAtTime(.25, actx.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + d + .15); o.start(actx.currentTime + d); o.stop(actx.currentTime + d + .16); });
+}
+async function viewOrders() {
+  const m = shell();
+  S.odate = S.odate || today();
+  m.innerHTML = `<div class="top"><h2 class="grow">Naročila za prevzem</h2>
+    <div class="datenav"><button class="btn" id="oprev">‹</button><input type="date" id="odate" value="${S.odate}"><button class="btn" id="onext">›</button></div>
+    <button class="btn" id="sound">${actx ? '🔔 Zvok vklopljen' : '🔕 Vklopi zvok'}</button><button class="btn primary" id="neword">+ Novo naročilo</button></div><div id="kb"></div>`;
+  $('#odate').onchange = e => { S.odate = e.target.value; load(); };
+  $('#oprev').onclick = () => { S.odate = addDays(S.odate, -1); viewOrders(); };
+  $('#onext').onclick = () => { S.odate = addDays(S.odate, 1); viewOrders(); };
+  $('#sound').onclick = e => { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); beep(); e.target.textContent = '🔔 Zvok vklopljen'; };
+  $('#neword').onclick = orderModal;
+  const seen = new Set(S.seenOrders || []);
+  const load = async () => {
+    const j = await api('orders', { date: S.odate });
+    const os = j.orders, now = new Date();
+    const fresh = os.filter(o => S.seenOrders && !seen.has(o.id)).map(o => o.id);
+    os.forEach(o => seen.add(o.id)); S.seenOrders = [...seen];
+    const cols = [['new', 'Nova'], ['preparing', 'V pripravi'], ['ready', 'Pripravljeno'], ['picked_up', 'Prevzeto']];
+    const next = { new: ['preparing', 'Začni pripravo'], preparing: ['ready', 'Pripravljeno'], ready: ['picked_up', 'Prevzeto'] };
+    const card = o => {
+      const late = o.status !== 'picked_up' && new Date(o.pickup_at.replace(' ', 'T')) < now;
+      return `<div class="ocard ${o.status} ${late ? 'late' : ''} ${fresh.includes(o.id) ? 'fresh' : ''}" data-oid="${o.id}">
+        <div class="h"><b>${timeOf(o.pickup_at)}</b><span class="muted">#${esc(o.code)}</span></div>
+        <div><b>${esc(o.name)}</b> ${o.phone ? `<span class="muted small">${esc(o.phone)}</span>` : ''} <span class="pill ${o.source}">${SRC[o.source] || o.source}</span></div>
+        <ul>${o.items.map(i => `<li><b>${i.qty}×</b> ${esc(i.name)}${i.options_text ? ` <small>(${esc(i.options_text)})</small>` : ''}${i.notes ? ` <small>· ${esc(i.notes)}</small>` : ''}</li>`).join('')}</ul>
+        ${o.notes ? `<div class="note">${esc(o.notes)}</div>` : ''}
+        <div class="row"><span class="price">${eur(o.total_cents)}</span><span style="flex:1"></span>
+        ${o.status !== 'picked_up' ? `<button class="btn sm ghost danger" data-st="cancelled">Prekliči</button>` : ''}
+        ${next[o.status] ? `<button class="btn sm primary" data-st="${next[o.status][0]}">${next[o.status][1]}</button>` : ''}</div></div>`;
+    };
+    const cancelled = os.filter(o => o.status === 'cancelled').length;
+    $('#kb').innerHTML = `<div class="kanban">${cols.map(([k, l]) => { const list = os.filter(o => o.status === k); return `<div class="col"><h3>${l}<span class="muted">${list.length}</span></h3>${list.map(card).join('') || '<div class="empty small">Prazno</div>'}</div>`; }).join('')}</div>
+      ${cancelled ? `<p class="muted small">Preklicanih: ${cancelled}</p>` : ''}`;
+    $$('#kb [data-st]').forEach(b => b.onclick = async () => {
+      const id = +b.closest('[data-oid]').dataset.oid;
+      if (b.dataset.st === 'cancelled' && !confirm('Prekličem naročilo?')) return;
+      try { await api('orders/status', { id, status: b.dataset.st }); load(); } catch (e) { toast(e.message, true); }
+    });
+    if (fresh.length) beep();
+  };
+  S.reloadOrders = load;
+  await load();
+  stopPolling(); pollT = setInterval(() => { if (S.view === 'narocila') load(); }, 10000);
+}
+async function orderModal() {
+  const menu = (await api('menu')).menu;
+  const items = menu.flatMap(c => c.items.filter(i => i.available && i.pickup).map(i => ({ ...i, cat: c.name })));
+  const cart = [];
+  const md = modal('Novo naročilo za prevzem', `
+    <div class="grid2"><label>Ime<input name="name"></label><label>Telefon<input name="phone"></label></div>
+    <div class="grid2"><label>Datum prevzema<input type="date" name="pdate" value="${S.odate || today()}"></label><label>Ura prevzema<input type="time" name="ptime" step="300"></label></div>
+    <label>Iskanje jedi<input id="isearch" placeholder="npr. pica"></label>
+    <div class="pick" id="ipick"></div>
+    <h3>Košarica</h3><div id="cart" class="stack"></div>
+    <label>Opombe<textarea name="notes" rows="2"></textarea></label>
+    <div class="avail" id="otot">Dodaj jedi.</div>`,
+    `<button class="btn" data-x2>Zapri</button><button class="btn primary" data-save>Ustvari naročilo</button>`);
+  const drawPick = () => {
+    const q = $('#isearch', md.el).value.toLowerCase();
+    $('#ipick', md.el).innerHTML = items.filter(i => !q || i.name.toLowerCase().includes(q) || i.cat.toLowerCase().includes(q)).map(i => `<div class="pi"><div><b>${esc(i.name)}</b> <span class="muted small">${esc(i.cat)}</span></div><span class="price">${eur(i.price_cents)}</span><button class="btn sm" data-add="${i.id}">Dodaj</button></div>`).join('') || '<div class="empty">Ni zadetkov.</div>';
+    $$('[data-add]', md.el).forEach(b => b.onclick = () => { const it = items.find(i => i.id === +b.dataset.add); cart.push({ it, qty: 1, opts: new Set(), notes: '' }); drawCart(); });
+  };
+  const lineCents = l => (l.it.price_cents + l.it.option_groups.flatMap(g => g.options).filter(o => l.opts.has(+o.id)).reduce((s, o) => s + +o.price_cents, 0)) * l.qty;
+  const drawCart = () => {
+    $('#cart', md.el).innerHTML = cart.map((l, idx) => `<div class="og" data-i="${idx}"><div class="row"><b style="flex:1">${esc(l.it.name)}</b>
+      <div class="qty"><button data-q="-1">−</button><b>${l.qty}</b><button data-q="1">+</button></div><span class="price">${eur(lineCents(l))}</span><button class="btn sm ghost danger" data-rm>✕</button></div>
+      ${l.it.option_groups.map(g => `<div class="small"><b>${esc(g.name)}</b>${+g.required ? ' (obvezno)' : ''}${+g.max_select > 1 ? ` · največ ${g.max_select}` : ''}<div class="row">${g.options.map(o => `<label class="check"><input type="${+g.max_select === 1 ? 'radio' : 'checkbox'}" name="g${idx}_${g.id}" value="${o.id}" ${l.opts.has(+o.id) ? 'checked' : ''}> ${esc(o.name)}${+o.price_cents ? ' +' + eur(o.price_cents) : ''}</label>`).join('')}</div></div>`).join('')}
+      <input placeholder="Opomba k jedi" data-n value="${esc(l.notes)}"></div>`).join('') || '<div class="muted small">Košarica je prazna.</div>';
+    $$('#cart .og', md.el).forEach(el => {
+      const l = cart[+el.dataset.i];
+      $$('[data-q]', el).forEach(b => b.onclick = () => { l.qty = Math.max(1, l.qty + +b.dataset.q); drawCart(); });
+      $('[data-rm]', el).onclick = () => { cart.splice(+el.dataset.i, 1); drawCart(); };
+      $('[data-n]', el).oninput = e => l.notes = e.target.value;
+      $$('input[type=radio],input[type=checkbox]', el).forEach(inp => inp.onchange = () => {
+        const g = l.it.option_groups.find(g => inp.name.endsWith('_' + g.id));
+        if (inp.type === 'radio') g.options.forEach(o => l.opts.delete(+o.id));
+        if (inp.checked) l.opts.add(+inp.value); else l.opts.delete(+inp.value);
+        drawCart();
+      });
+    });
+    const tot = cart.reduce((s, l) => s + lineCents(l), 0);
+    $('#otot', md.el).textContent = cart.length ? 'Skupaj: ' + eur(tot) : 'Dodaj jedi.';
+  };
+  $('#isearch', md.el).oninput = drawPick; drawPick(); drawCart();
+  const d = new Date(Date.now() + (S.me.settings.pickup_prep_minutes || 20) * 60000);
+  $('[name=ptime]', md.el).value = fromMin(Math.ceil((d.getHours() * 60 + d.getMinutes()) / 5) * 5);
+  $('[data-x2]', md.el).onclick = md.close;
+  $('[data-save]', md.el).onclick = async () => {
+    const f = n => $(`[name=${n}]`, md.el).value.trim();
+    if (!f('name')) return toast('Vpiši ime.', true);
+    if (!cart.length) return toast('Košarica je prazna.', true);
+    try {
+      await api('orders/create', { name: f('name'), phone: f('phone'), notes: f('notes'), pickup_time: f('pdate') + ' ' + f('ptime'), items: cart.map(l => ({ item_id: l.it.id, qty: l.qty, options: [...l.opts], notes: l.notes })) });
+      toast('Naročilo ustvarjeno'); md.close(); S.reloadOrders && S.reloadOrders();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+/* ---------------- meni ---------------- */
+async function viewMenu() {
+  const m = shell();
+  const menu = (await api('menu')).menu;
+  S.menu = menu;
+  m.innerHTML = `<div class="top"><h2 class="grow">Meni</h2><button class="btn" id="addcat">+ Kategorija</button><button class="btn primary" id="additem">+ Jed</button></div>
+    <p class="muted small" style="margin-top:-8px">Tatjana bere ta meni. Ko jed zmanjka, jo izklopi in je Tatjana ne bo več ponujala.</p>
+    ${menu.map(c => `<div class="card mcat"><div class="head"><h3 style="flex:1">${esc(c.name)}</h3>${c.id ? `<button class="btn sm ghost" data-ecat="${c.id}">Preimenuj</button><button class="btn sm ghost danger" data-dcat="${c.id}">Izbriši</button>` : ''}</div>
+      ${c.items.map(i => `<div class="mitem ${i.available ? '' : 'na'}"><div><b>${esc(i.name)}</b>${i.option_groups.length ? ` <span class="pill">${i.option_groups.length} izbir</span>` : ''}${i.pickup ? '' : ' <span class="pill">samo v lokalu</span>'}<div class="muted small">${[esc(i.description || ''), i.allergens ? 'Alergeni: ' + esc(i.allergens) : ''].filter(Boolean).join(' · ')}</div></div>
+        <span class="price">${eur(i.price_cents)}</span><button class="switch ${i.available ? 'on' : ''}" data-tog="${i.id}" title="Na voljo"></button><button class="btn sm" data-edit="${i.id}">Uredi</button></div>`).join('') || '<div class="empty small">Ni jedi.</div>'}</div>`).join('') || '<div class="card empty">Meni je prazen. Dodaj kategorijo in jedi.</div>'}`;
+  $('#addcat').onclick = () => catModal();
+  $('#additem').onclick = () => itemModal({});
+  $$('[data-ecat]').forEach(b => b.onclick = () => catModal(menu.find(c => c.id === +b.dataset.ecat)));
+  $$('[data-dcat]').forEach(b => b.onclick = async () => { if (confirm('Izbrišem kategorijo? Jedi ostanejo pod "Ostalo".')) { await api('menu/category', { id: +b.dataset.dcat, delete: 1 }); viewMenu(); } });
+  $$('[data-tog]').forEach(b => b.onclick = async () => { await api('menu/toggle', { id: +b.dataset.tog }); viewMenu(); });
+  $$('[data-edit]').forEach(b => b.onclick = () => itemModal(menu.flatMap(c => c.items).find(i => i.id === +b.dataset.edit)));
+}
+function catModal(c = {}) {
+  const md = modal(c.id ? 'Preimenuj kategorijo' : 'Nova kategorija', `<label>Ime<input name="name" value="${esc(c.name || '')}"></label><label>Vrstni red<input type="number" name="sort" value="${c.sort ?? S.menu.length}"></label>`, `<button class="btn primary" data-save>Shrani</button>`);
+  $('[data-save]', md.el).onclick = async () => { await api('menu/category', { id: c.id, name: $('[name=name]', md.el).value, sort: +$('[name=sort]', md.el).value }); md.close(); viewMenu(); };
+}
+function itemModal(i) {
+  const cats = S.menu.filter(c => c.id);
+  const groups = JSON.parse(JSON.stringify(i.option_groups || []));
+  const md = modal(i.id ? 'Uredi jed' : 'Nova jed', `
+    <div class="grid2"><label>Ime<input name="name" value="${esc(i.name || '')}"></label><label>Kategorija<select name="category_id">${cats.map(c => `<option value="${c.id}" ${c.id === i.category_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label></div>
+    <label>Opis<textarea name="description" rows="2">${esc(i.description || '')}</textarea></label>
+    <div class="grid3"><label>Cena (€)<input name="price_eur" value="${i.price_cents != null ? (i.price_cents / 100).toFixed(2).replace('.', ',') : ''}"></label><label>Priprava (min)<input type="number" name="prep_minutes" value="${i.prep_minutes ?? ''}" placeholder="privzeto"></label><label>Vrstni red<input type="number" name="sort" value="${i.sort ?? 0}"></label></div>
+    <label>Alergeni<input name="allergens" value="${esc(i.allergens || '')}" placeholder="gluten, mleko, jajca"></label>
+    <div class="row"><label class="check"><input type="checkbox" name="available" ${i.available !== 0 ? 'checked' : ''}> Na voljo</label><label class="check"><input type="checkbox" name="pickup" ${i.pickup !== 0 ? 'checked' : ''}> Tudi za prevzem</label></div>
+    <div class="row"><h3 style="flex:1">Izbire in dodatki</h3><button class="btn sm" id="addg">+ Skupina</button></div><div id="groups" class="stack"></div>`,
+    `${i.id ? '<button class="btn danger" data-del style="margin-right:auto">Izbriši jed</button>' : ''}<button class="btn primary" data-save>Shrani</button>`);
+  const drawG = () => {
+    $('#groups', md.el).innerHTML = groups.map((g, gi) => `<div class="og" data-g="${gi}"><div class="grid3"><input data-gf="name" placeholder="npr. Velikost" value="${esc(g.name)}"><label class="check"><input type="checkbox" data-gf="required" ${+g.required ? 'checked' : ''}> Obvezno</label><label class="check">Največ <input type="number" min="1" style="width:60px" data-gf="max_select" value="${g.max_select || 1}"></label></div>
+      ${(g.options || []).map((o, oi) => `<div class="opt" data-o="${oi}"><input data-of="name" placeholder="Možnost" value="${esc(o.name)}"><input data-of="price_eur" placeholder="+ €" value="${o.price_eur ?? (o.price_cents ? (o.price_cents / 100).toFixed(2).replace('.', ',') : '')}"><button class="btn sm ghost danger" data-orm>✕</button></div>`).join('')}
+      <div class="row"><button class="btn sm" data-oadd>+ Možnost</button><button class="btn sm ghost danger" data-grm>Odstrani skupino</button></div></div>`).join('') || '<div class="muted small">Npr. velikost pice, pečenost, dodatki z doplačilom.</div>';
+    $$('[data-g]', md.el).forEach(el => {
+      const g = groups[+el.dataset.g];
+      $$('[data-gf]', el).forEach(inp => inp.oninput = () => g[inp.dataset.gf] = inp.type === 'checkbox' ? (inp.checked ? 1 : 0) : inp.value);
+      $$('[data-o]', el).forEach(oel => { const o = g.options[+oel.dataset.o]; $$('[data-of]', oel).forEach(inp => inp.oninput = () => o[inp.dataset.of] = inp.value); $('[data-orm]', oel).onclick = () => { g.options.splice(+oel.dataset.o, 1); drawG(); }; });
+      $('[data-oadd]', el).onclick = () => { (g.options = g.options || []).push({ name: '', price_eur: '' }); drawG(); };
+      $('[data-grm]', el).onclick = () => { groups.splice(+el.dataset.g, 1); drawG(); };
+    });
+  };
+  $('#addg', md.el).onclick = () => { groups.push({ name: '', required: 0, max_select: 1, options: [{ name: '', price_eur: '' }] }); drawG(); };
+  drawG();
+  if (i.id) $('[data-del]', md.el).onclick = async () => { if (confirm('Izbrišem jed?')) { await api('menu/item', { id: i.id, delete: 1 }); md.close(); viewMenu(); } };
+  $('[data-save]', md.el).onclick = async () => {
+    const f = n => $(`[name=${n}]`, md.el);
+    const og = groups.map(g => ({ ...g, options: (g.options || []).map(o => ({ name: o.name, price_eur: o.price_eur ?? (o.price_cents ? o.price_cents / 100 : 0) })) }));
+    try {
+      await api('menu/item', { id: i.id, name: f('name').value, category_id: +f('category_id').value || null, description: f('description').value, price_eur: f('price_eur').value, prep_minutes: f('prep_minutes').value, sort: +f('sort').value, allergens: f('allergens').value, available: f('available').checked ? 1 : 0, pickup: f('pickup').checked ? 1 : 0, option_groups: og });
+      md.close(); viewMenu(); toast('Shranjeno');
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+/* ---------------- nastavitve ---------------- */
+async function viewSettings() {
+  const m = shell();
+  const j = await api('settings');
+  const st = j.settings, hours = j.hours, sp = j.special_days;
+  const apiBase = location.href.replace(/[#?].*$/, '').replace(/index\.php$/, '').replace(/\/?$/, '/') + 'api.php?r=ai/';
+  const hourRows = kind => [1, 2, 3, 4, 5, 6, 7].map(d => {
+    const hs = hours.filter(h => h.kind === kind && +h.weekday === d);
+    return `<tr data-kind="${kind}" data-day="${d}"><td><b>${DAYS[d]}</b></td><td class="ints">${hs.map(h => intHTML(kind, h)).join('') || '<span class="muted small closed">Zaprto</span>'}</td><td><button class="btn sm" data-addint>+ Interval</button></td></tr>`;
+  }).join('');
+  m.innerHTML = `<div class="top"><h2 class="grow">Nastavitve</h2><button class="btn primary" id="ssave">Shrani nastavitve</button></div>
+  <div class="stack">
+    <div class="card pad stack"><h3>Restavracija</h3><div class="grid3"><label>Ime<input id="r_name" value="${esc(j.restaurant.name)}"></label><label>Telefon<input id="r_phone" value="${esc(j.restaurant.phone || '')}"></label><label>Naslov<input id="r_address" value="${esc(j.restaurant.address || '')}"></label></div></div>
+    <div class="stack">
+      <div class="card pad stack"><h3>Delovni čas za goste</h3><p class="muted small">Zadnja rezervacija: najkasnejša ura, ko Tatjana še sprejme rezervacijo.</p><table class="simple">${hourRows('dine')}</table></div>
+      <div class="card pad stack"><h3>Ure prevzema</h3><p class="muted small">Kdaj je mogoče prevzeti naročeno hrano.</p><table class="simple">${hourRows('pickup')}</table></div>
+    </div>
+    <div class="card pad stack"><h3>Pravila rezervacij</h3>
+      <div class="grid4"><label>Korak termina (min)<input type="number" data-s="slot_minutes" value="${st.slot_minutes}"></label><label>Čas za pospravljanje (min)<input type="number" data-s="buffer_minutes" value="${st.buffer_minutes}"></label><label>Največ prihodov na termin (0 = brez)<input type="number" data-s="max_covers_per_slot" value="${st.max_covers_per_slot}"></label><label>Največja skupina za Tatjano<input type="number" data-s="max_party_online" value="${st.max_party_online}"></label>
+      <label>Najmanj vnaprej (min)<input type="number" data-s="min_notice_minutes" value="${st.min_notice_minutes}"></label><label>Največ dni vnaprej<input type="number" data-s="days_ahead" value="${st.days_ahead}"></label><label style="grid-column:span 2">Cone (ločene z vejico)<input id="zones" value="${esc(st.zones.join(', '))}"></label></div>
+      <h3>Povprečen čas obiska</h3><table class="simple" id="durs"><tr><th>Do oseb</th><th>Minut</th><th></th></tr>${st.durations.map(d => durRow(d)).join('')}</table><div><button class="btn sm" id="adddur">+ Pravilo</button></div></div>
+    <div class="card pad stack"><h3>Prevzem hrane</h3><div class="grid4"><label class="check"><input type="checkbox" data-s="pickup_enabled" ${st.pickup_enabled ? 'checked' : ''}> Sprejemamo naročila za prevzem</label><label>Privzeti čas priprave (min)<input type="number" data-s="pickup_prep_minutes" value="${st.pickup_prep_minutes}"></label><label>Termin kuhinje (min)<input type="number" data-s="pickup_slot_minutes" value="${st.pickup_slot_minutes}"></label><label>Največ naročil na termin<input type="number" data-s="max_orders_per_slot" value="${st.max_orders_per_slot}"></label></div></div>
+    <div class="card pad stack"><h3>Zaprti in posebni dnevi</h3><table class="simple" id="spd"><tr><th>Datum</th><th>Zaprto</th><th>Opomba</th><th></th></tr>${sp.map(spRow).join('')}</table><div><button class="btn sm" id="addsp">+ Dan</button></div></div>
+    <div class="card pad stack"><h3>Tatjana</h3>
+      <label>Pozdrav na začetku klica<input data-s="ai_greeting" value="${esc(st.ai_greeting)}"></label>
+      <label class="check"><input type="checkbox" data-s="sms_enabled" ${st.sms_enabled ? 'checked' : ''}> Pošiljaj SMS potrditve (ko je ponudnik SMS povezan)</label>
+      <div><div class="small muted">Naslov API</div><code class="key">${esc(apiBase)}</code></div>
+      <div><div class="small muted">API ključ (glava X-Api-Key)</div><code class="key" id="akey">${esc(j.restaurant.api_key)}</code></div>
+      <div class="row"><button class="btn sm" id="copyk">Kopiraj ključ</button><button class="btn sm danger" id="newk">Ustvari nov ključ</button></div></div>
+  </div>`;
+  const wire = () => {
+    $$('[data-addint]').forEach(b => b.onclick = () => { const tr = b.closest('tr'); $('.closed', tr)?.remove(); $('.ints', tr).insertAdjacentHTML('beforeend', intHTML(tr.dataset.kind, { open_time: '12:00', close_time: '22:00', last_booking: tr.dataset.kind === 'dine' ? '20:30' : '' })); wire(); });
+    $$('[data-rmint]').forEach(b => b.onclick = () => { b.closest('.int').remove(); });
+    $$('[data-rmrow]').forEach(b => b.onclick = () => b.closest('tr').remove());
+  };
+  $('#adddur').onclick = () => { $('#durs').insertAdjacentHTML('beforeend', durRow({ max_party: 8, minutes: 120 })); wire(); };
+  $('#addsp').onclick = () => { $('#spd').insertAdjacentHTML('beforeend', spRow({ day: today(), closed: 1, note: '' })); wire(); };
+  $('#copyk').onclick = () => { navigator.clipboard.writeText($('#akey').textContent); toast('Ključ kopiran'); };
+  $('#newk').onclick = async () => { if (!confirm('Star ključ bo prenehal delovati. Tatjano boš moral posodobiti. Nadaljujem?')) return; const r = await api('settings/new_key'); $('#akey').textContent = r.api_key; toast('Nov ključ ustvarjen'); };
+  wire();
+  $('#ssave').onclick = async () => {
+    const settings = {};
+    $$('[data-s]').forEach(i => settings[i.dataset.s] = i.type === 'checkbox' ? i.checked : i.type === 'number' ? +i.value : i.value);
+    settings.zones = $('#zones').value.split(',').map(s => s.trim()).filter(Boolean);
+    settings.durations = $$('#durs tr[data-dur]').map(tr => ({ max_party: +$('[data-k=max_party]', tr).value, minutes: +$('[data-k=minutes]', tr).value })).filter(d => d.max_party > 0 && d.minutes > 0);
+    if (!settings.durations.length) return toast('Dodaj vsaj eno pravilo za čas obiska.', true);
+    const hrs = $$('.int').map(el => ({ kind: el.dataset.kind, weekday: +el.closest('tr').dataset.day, open_time: $('[data-k=open]', el).value, close_time: $('[data-k=close]', el).value, last_booking: $('[data-k=last]', el)?.value || null }));
+    const special = $$('#spd tr[data-sp]').map(tr => ({ day: $('[data-k=day]', tr).value, closed: $('[data-k=closed]', tr).checked ? 1 : 0, note: $('[data-k=note]', tr).value }));
+    try {
+      await api('settings/save', { restaurant: { name: $('#r_name').value, phone: $('#r_phone').value, address: $('#r_address').value }, settings, hours: hrs, special_days: special });
+      S.me = await api('auth/me'); toast('Nastavitve shranjene');
+    } catch (e) { toast(e.message, true); }
+  };
+}
+function intHTML(kind, h) {
+  return `<div class="int row" data-kind="${kind}" style="margin:3px 0"><input type="time" data-k="open" value="${h.open_time}" style="width:110px"> do <input type="time" data-k="close" value="${h.close_time}" style="width:110px">${kind === 'dine' ? ` <span class="small muted">zadnja</span> <input type="time" data-k="last" value="${h.last_booking || ''}" style="width:110px">` : ''}<button class="btn sm ghost danger" data-rmint>✕</button></div>`;
+}
+function durRow(d) { return `<tr data-dur><td><input type="number" data-k="max_party" value="${d.max_party}" style="width:90px"></td><td><input type="number" data-k="minutes" step="15" value="${d.minutes}" style="width:90px"></td><td><button class="btn sm ghost danger" data-rmrow>✕</button></td></tr>`; }
+function spRow(d) { return `<tr data-sp><td><input type="date" data-k="day" value="${d.day}"></td><td><input type="checkbox" data-k="closed" ${+d.closed ? 'checked' : ''}></td><td><input data-k="note" value="${esc(d.note || '')}" placeholder="npr. božič"></td><td><button class="btn sm ghost danger" data-rmrow>✕</button></td></tr>`; }
+
+boot();

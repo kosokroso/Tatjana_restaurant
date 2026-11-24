@@ -1,0 +1,5 @@
+Options -Indexes
+<FilesMatch "^(config\.php|config\.sample\.php)$">
+  Require all denied
+</FilesMatch>
+RedirectMatch 403 ^/?(.*/)?(lib|data|agent)/

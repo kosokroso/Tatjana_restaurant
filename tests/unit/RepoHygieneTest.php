@@ -51,7 +51,8 @@ final class RepoHygieneTest extends TestCase
             }
             $src = (string) file_get_contents($path);
             $this->assertFalse((bool) preg_match('/\b(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AC[0-9a-f]{32})\b/', $src), "videti kot ključ: {$path}");
-            $this->assertFalse((bool) preg_match("/'pass'\s*=>\s*'[^']+'/", $src), "geslo v datoteki: {$path}");
+            // Prazno ali nadomestek z velikimi črkami (npr. 'GESLO') je dovoljeno.
+            $this->assertFalse((bool) preg_match("/'pass'\s*=>\s*'(?![A-Z_]*')[^']+'/", $src), "geslo v datoteki: {$path}");
         }
     }
 }

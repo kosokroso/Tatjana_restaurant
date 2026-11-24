@@ -32,7 +32,12 @@
 ## Faza 2 (po potrditvi faze 1)
 - [ ] prijava z geslom, seja v bazi, CSRF, PIN na napravi, zaklep
 - [ ] `StaffAuthenticator` namesto `DenyAllAuthenticator`
-- [ ] PWA zasloni
+- [ ] UX PWA pripravi kolega (od 23. 11. 2026); mi ga povežemo z API in izboljšamo
+
+## Faza 3: Tatjana
+- [x] DIDWW številka za restavracije: **+386 5 7774121** (Nova Gorica), kupljena 22. 11. 2026, identiteta Nejc Perkon s.p. odobrena, $3.05/mesec z DDV
+- [ ] DIDWW inbound trunk proti LiveKitu in dodelitev številki (zdaj: brez trunka)
+- [ ] LiveKit inbound trunk z `allowed_addresses` DIDWW + dispatch pravilo na restavracijskega agenta
 
 ## Kasneje
 - [ ] Faza 4: GDPR anonimizacija mora počistiti tudi `reservation_events.before_json/after_json` (vsebujeta ime in telefon)

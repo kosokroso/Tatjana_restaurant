@@ -1,0 +1,6 @@
+# Lokalna konfiguracija z geslom baze in podatki: nikoli v git.
+config.php
+data/*
+!data/.htaccess
+error_log
+*.log
