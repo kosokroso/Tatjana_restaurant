@@ -53,17 +53,24 @@ Dva backenda delata isto. Za demo predlagam **kolegovo aplikacijo**, ker ima UI 
 
 ### 1. Koda v git
 Narejeno 24. 11. 2026: `public_html/miza` je v tem repozitoriju v mapi `miza/`, brez `config.php`. Spletni naslov ostane `kreativnisplet.si/miza/`.
-Še odprto: deploy iz gita (cPanel Git, `.cpanel.yml` z rsync samo `miza/` v `public_html/miza/`, izvzem `config.php`, `data/*`, `error_log`). Potrebuje GitHub repozitorij.
-Končano, ko: deploy iz gita da isto stran kot zdaj.
+Deploy iz gita deluje od 24. 11. 2026: GitHub `kosokroso/Tatjana_restaurant` (zaseben), cPanel klon v `~/repositories/tatjana_restaurant` prek SSH aliasa `github-tatjana-restaurant` (`~/.ssh/config`, ključ `tatjana_restaurant_deploy`, na GitHubu read-only deploy key). Lasten ključ je potreben, ker GitHub istega deploy ključa ne sprejme za dva repozitorija (`id_ed25519` je ključ za KS_KurivoGorica).
+Postopek: push, nato v cPanelu Git Version Control -> Update from Remote -> Deploy HEAD Commit. `.cpanel.yml` naloži samo `miza/`, brez `--delete`.
 
-### 2. Varovala v `/miza` API (točke 1, 2, 4, 6)
+**Kolega naj od zdaj ureja kodo v gitu, ne v File Managerju**, sicer jo naslednji deploy prepiše.
+
+### 2. Varovala v `/miza` API (točke 1, 2, 4, 6) — narejeno, na strežniku 24. 11. 2026
+Preizkušeno lokalno s SQLite. Na produkciji preverjeno: aplikacija dela, `ai/*` brez ključa vrne 401, zaščitene poti 403. `ai/*` s ključem na produkcijski bazi še ni preizkušen.
 - `find`: samo `code` ali `caller_phone`; brez iskanja po imenu za `ai/*`.
 - `cancel`/`change`: `caller_phone` mora biti enak telefonu rezervacije, ali pa je podana koda in se ujema tudi telefon.
 - `change_reservation`: zaklep restavracije.
 - `source` fiksen.
 Končano, ko: curl z napačno številko ne vrne in ne spremeni tuje rezervacije.
 
-### 3. Demo podatki
+### 3. Demo podatki — narejeno 24. 11. 2026
+Odločitev: ime ostane "Demo restavracija", brez naslova in brez preveze na človeka (Tatjana ob veliki skupini ali napaki reče, naj pokličejo kasneje). Urnik, mize in meni so iz seed podatkov. Obstoječi API ključ ostane.
+Preverjeno na produkciji s ključem: `ai/info`, `ai/availability` (4 osebe = miza 3, 105 min), 12 oseb = `group_too_large` + `handoff`, `ai/day_slots` (35 terminov 12:00-20:30), iskanje po imenu in po izgovorjeni številki zavrnjeno, napačen ključ 401.
+
+Prvotni predlog:
 V aplikaciji: ime, naslov, urnik, zaprti dnevi, meni z alergeni, cone, `max_party_online`. Nov API ključ v Nastavitvah. Ključ gre samo v LiveKit secrets, ne v klepet in ne v repozitorij.
 Končano, ko: `ai/info` vrne pravilne podatke.
 
