@@ -43,6 +43,8 @@ label.check{flex-direction:row;align-items:center;gap:8px;font-size:14px}
 .btn.sm{min-height:32px;padding:0 11px;font-size:13px}
 .btn.danger{color:var(--alert)}
 .btn.primary.danger{color:#fff}
+.btn.warn{background:var(--alert);border-color:var(--alert);color:#fff}
+.btn.warn:hover{background:#a52f1a}
 .btn:disabled{opacity:.5;cursor:default}
 .ib{width:38px;height:38px;display:grid;place-items:center;border:1px solid var(--line2);background:var(--surface);border-radius:6px;cursor:pointer;color:var(--ink2);padding:0}
 .ib:hover{background:var(--sunk)}
@@ -74,6 +76,9 @@ label.check{flex-direction:row;align-items:center;gap:8px;font-size:14px}
 .badge[hidden]{display:none}
 .ni.more{display:none}
 .rail-foot{margin-top:auto}
+.ni.muted-s{color:var(--muted)}
+.wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px}
+.wgrid .chip:disabled{opacity:.45;cursor:not-allowed}
 .more-sheet{display:none}
 .main{padding:22px 28px 48px;min-width:0}
 
@@ -292,6 +297,7 @@ code.key{background:var(--sunk);padding:7px 10px;border-radius:6px;font:12.5px v
   .shell{grid-template-columns:1fr}
   .rail{position:fixed;left:0;right:0;bottom:0;top:auto;height:auto;flex-direction:row;gap:0;padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);z-index:40}
   .brand,.rail-foot,.ni.alt{display:none}
+  .rail-foot #sndbtn{display:none}
   .ni{flex:1;min-height:54px;padding:6px 0;justify-content:center;font-size:11px}
   .ni.more{display:flex}
   .ni .badge{right:calc(50% - 22px)}

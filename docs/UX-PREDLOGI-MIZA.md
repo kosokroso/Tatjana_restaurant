@@ -30,6 +30,12 @@ Lokalno preizkušeno na 1440, 1024 in 390 px; čaka na deploy.
 - **P0-4 (del):** rezervacija brez "Prišli" po 10 min dobi oznako "zamuja N min" in klic z enim dotikom. Predlog "Ni prišel" po 30 min še ni narejen.
 - "Prekliči" ni več gumb v vrstici (je v oknu Uredi), da ga ni mogoče sprožiti z naključnim dotikom.
 
+### P0-2, P0-4, P0-5 (26. 11. 2026)
+- **P0-2 zvok:** stikalo "Zvok / Tiho" v tirnici (na telefonu v meniju Več), izbira se zapomni na napravi. Gumb na strani Naročila je odstranjen. Brskalnik dovoli zvok šele po prvem dotiku po nalaganju strani.
+- **P0-4:** po 30 min brez prihoda je glavni gumb rdeč "Ni prišel" in vrstica pove "predlog: Ni prišel". "Prišli" ostane.
+- **P0-5:** gumb "Gost brez rezervacije" (samo za danes): število oseb, neobvezno ime, izbira mize. Zasedene mize so onemogočene, mize z rezervacijo kasneje kažejo "Prosta do HH:MM", najboljša prosta miza je označena s "predlog". Potrditev ustvari rezervacijo za zdaj in jo takoj postavi na "Za mizo".
+- Naročila: oznake stolpcev po Lukovem poteku: Nova, V pripravi, **Opravljeno** (čaka na prevzem), Prevzeto. Glej `docs/PLAN-NAROCILA.md`.
+
 ### Časovnica (24. 11. 2026, kasneje isti večer)
 Čez celo širino strani, pod tlorisom in seznamom. Preklop **Dan / 3 dni / Teden** (zapomni se na napravi). Dnevi so v isti vodoravni osi, vsak z lastnim delovnim časom, zaprt dan je ozek. Imena miz, cone in dnevi so lepljivi pri drsenju. Ob odprtju drsi na "zdaj"; gumb "Zdaj". Glava dne kaže število rezervacij in gostov; klik nanjo odpre ta dan. Klik na prazno vrstico odpre novo rezervacijo z izpolnjenim dnem, uro (na 15 min) in mizo. Zamujajoče rezervacije imajo rdeč rob, opombe rdečo piko. Nepreizkušeno: več kot 7 dni, tisoče rezervacij (vsak klic `day` je ločen, teden = 7 klicev na 20 s).
 

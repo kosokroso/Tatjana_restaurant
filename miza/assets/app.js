@@ -9,7 +9,7 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const eur = c => (c / 100).toLocaleString('sl-SI', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 const DAYS = ['', 'Ponedeljek', 'Torek', 'Sreda', 'Četrtek', 'Petek', 'Sobota', 'Nedelja'];
 const ST_RES = { confirmed: 'Potrjena', seated: 'Za mizo', completed: 'Zaključena', no_show: 'Ni prišel', cancelled: 'Preklicana' };
-const ST_ORD = { new: 'Nova', preparing: 'V pripravi', ready: 'Pripravljeno', picked_up: 'Prevzeto', cancelled: 'Preklicano' };
+const ST_ORD = { new: 'Nova', preparing: 'V pripravi', ready: 'Opravljeno', picked_up: 'Prevzeto', cancelled: 'Preklicano' };
 const SRC = { tatjana: 'Tatjana', manual: 'Ročno', web: 'Splet' };
 
 function today() { const d = new Date(); return ymd(d); }
@@ -98,12 +98,16 @@ function shell() {
     $('#app').innerHTML = `<div class="shell"><nav class="rail" aria-label="Glavna navigacija"><div class="brand" title="${esc(S.me.restaurant.name)}">${LOGO}</div>
       ${NAV.map(([k, t, , main]) => `<a class="ni ${main ? '' : 'alt'}" href="#${k}" data-nav="${k}">${ic(k)}<span>${t}</span>${k === 'narocila' ? '<span class="badge" id="obadge" hidden></span>' : ''}</a>`).join('')}
       <button class="ni more" id="morebtn" aria-label="Več">${ic('vec')}<span>Več</span></button>
-      <div class="rail-foot"><button class="ni" id="logout" title="${esc(S.me.user.email)}">${ic('odjava')}<span>Odjava</span></button></div>
+      <div class="rail-foot"><button class="ni" id="sndbtn" aria-label="Zvok obvestil"></button><button class="ni" id="logout" title="${esc(S.me.user.email)}">${ic('odjava')}<span>Odjava</span></button></div>
     </nav>
     <div class="more-sheet" id="more" hidden>${NAV.filter(n => !n[3]).map(([k, , t]) => `<a href="#${k}" data-nav="${k}">${ic(k)}${t}</a>`).join('')}
+      <button id="sndbtn2"></button>
       <button id="logout2">${ic('odjava')}Odjava<small>${esc(S.me.user.email)}</small></button></div>
     <main class="main" id="main"></main></div>`;
     $('#logout').onclick = doLogout; $('#logout2').onclick = doLogout;
+    $('#sndbtn').onclick = () => setSound(!soundOn()); $('#sndbtn2').onclick = () => setSound(!soundOn());
+    document.addEventListener('pointerdown', () => { if (soundOn()) initAudio(); });
+    drawSoundBtn();
     $('#morebtn').onclick = e => { e.stopPropagation(); $('#more').hidden = !$('#more').hidden; };
     document.addEventListener('click', e => { const m = $('#more'); if (m && !m.hidden && !e.target.closest('#more')) m.hidden = true; });
     document.addEventListener('keydown', e => { const m = $('#more'); if (e.key === 'Escape' && m) m.hidden = true; });
@@ -156,7 +160,7 @@ async function viewDay() {
   m.innerHTML = `<div class="phead"><div class="grow"><div class="over">${esc(S.me.restaurant.name)}</div>
       <div class="dnav"><button class="ib" id="dprev" aria-label="Prejšnji dan">${ic('levo')}</button><h1 class="ptitle">${dateLabel(S.date)}</h1><button class="ib" id="dnext" aria-label="Naslednji dan">${ic('desno')}</button></div></div>
     <div class="dctl"><input type="date" id="ddate" value="${S.date}" aria-label="Datum"><button class="btn" id="dtoday">Danes</button>
-    <button class="btn primary fab" id="newres" aria-label="Nova rezervacija">${ic('plus')}<span class="lbl">Nova rezervacija</span></button></div></div>
+    ${S.date === today() ? '<button class="btn" id="walkin">Gost brez rezervacije</button>' : ''}<button class="btn primary fab" id="newres" aria-label="Nova rezervacija">${ic('plus')}<span class="lbl">Nova rezervacija</span></button></div></div>
     <div class="statline" id="stat"></div>
     <div class="alert" id="stale" hidden></div>
     <div class="seg" id="dtabs" role="tablist"><button data-tab="list">Seznam</button><button data-tab="plan">Mize</button><button data-tab="time">Časovnica</button></div>
@@ -175,6 +179,7 @@ async function viewDay() {
   $('#dnext').onclick = () => { S.date = addDays(S.date, 1); S.minute = null; viewDay(); };
   $('#dtoday').onclick = () => { S.date = today(); S.minute = null; viewDay(); };
   $('#newres').onclick = () => resModal({ date: S.date, time: S.minute != null ? fromMin(S.minute) : '19:00' });
+  if ($('#walkin')) $('#walkin').onclick = walkinModal;
   $$('#dtabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; syncTabs(); if (S.tab === 'plan' && S.day) drawPlan(); if (S.tab === 'time') drawTimeline(); });
   $$('#tlseg button').forEach(b => b.onclick = () => { S.tlDays = +b.dataset.r; S.tlFresh = true; try { localStorage.setItem('tm_tl', S.tlDays); } catch { } loadTimeline(); });
   $('#tlnow').onclick = () => { const sc = $('#tlscroll'); if (sc && S.tlNowX != null) sc.scrollTo({ left: Math.max(0, S.tlNowX - sc.clientWidth * .3), behavior: 'smooth' }); };
@@ -188,6 +193,51 @@ async function viewDay() {
     new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w && w !== lastT) { lastT = w; if (S.tl && S.view === 'pregled') drawTimeline(); } }).observe($('#tlscroll'));
   }
   await loadDay();
+}
+/* Gost brez rezervacije: miza + število oseb, začetek je zdaj, status takoj "Za mizo".
+   Zasedene mize so onemogočene; mize z rezervacijo kasneje kažejo, do kdaj so proste. */
+function walkinModal() {
+  if (!S.day || S.day.date !== today()) return toast('Gostov brez rezervacije vpišeš samo za danes.', true);
+  const nm = nowMin();
+  const md = modal('Gost brez rezervacije', `
+    <div class="grid2"><label>Število oseb<input type="number" name="party" min="1" value="2"></label><label>Ime (neobvezno)<input name="name" autocomplete="off"></label></div>
+    <div><div class="small muted" style="margin-bottom:6px">Izberi mizo</div><div class="wgrid" id="wgrid"></div></div>
+    <div class="avail" id="wavail">Izberi mizo.</div>`,
+    `<button class="btn" data-x2>Zapri</button><button class="btn primary" data-save disabled>Posadi goste</button>`);
+  let pick = null;
+  const party = () => Math.max(1, +$('[name=party]', md.el).value || 1);
+  const draw = () => {
+    const p = party();
+    const info = S.day.tables.map(t => { const st = tableState(t, nm); return { t, st, busy: ['res', 'seated'].includes(st.cls), fits: p <= +t.max_seats }; });
+    const best = info.filter(i => !i.busy && i.fits && i.st.cls !== 'soon').sort((a, b) => a.t.max_seats - b.t.max_seats)[0]
+      || info.filter(i => !i.busy && i.fits).sort((a, b) => a.t.max_seats - b.t.max_seats)[0];
+    info.sort((a, b) => (a.busy - b.busy) || (!a.fits - !b.fits) || String(a.t.name).localeCompare(String(b.t.name), 'sl', { numeric: true }));
+    $('#wgrid', md.el).innerHTML = info.map(({ t, st, busy, fits }) => {
+      const sub = busy ? 'Zasedeno' : st.next ? `Prosta do ${timeOf(st.next.start_at)}` : 'Prosta';
+      return `<button class="chip ${pick === t.id ? 'sel' : ''} ${busy ? 'off' : st.cls === 'soon' ? 'soon' : ''}" data-t="${t.id}" ${busy ? 'disabled' : ''}><b>${esc(t.name)}</b><span class="sub">${sub}</span><i>${best && best.t === t ? 'predlog · ' : ''}${t.min_seats}–${t.max_seats} oseb${fits ? '' : ' (premajhna)'}</i></button>`;
+    }).join('');
+    $$('#wgrid [data-t]', md.el).forEach(b => b.onclick = () => { pick = +b.dataset.t; draw(); });
+    const t = S.day.tables.find(x => x.id === pick), st = t && tableState(t, nm);
+    const box = $('#wavail', md.el);
+    if (!t) { box.className = 'avail'; box.textContent = 'Izberi mizo.'; }
+    else if (p > +t.max_seats) { box.className = 'avail no'; box.textContent = `Miza ${t.name} ima največ ${t.max_seats} mest, gostov je ${p}.`; }
+    else if (st.next) { box.className = 'avail'; box.textContent = `Miza ${t.name}: rezervacija ${timeOf(st.next.start_at)} (${st.next.name}). Gostje morajo oditi do takrat.`; }
+    else { box.className = 'avail yes'; box.textContent = `Miza ${t.name} je prosta.`; }
+    $('[data-save]', md.el).disabled = !t;
+  };
+  $('[name=party]', md.el).addEventListener('input', draw);
+  draw();
+  $('[data-x2]', md.el).onclick = md.close;
+  $('[data-save]', md.el).onclick = async () => {
+    if (!pick) return;
+    const btn = $('[data-save]', md.el); btn.disabled = true;
+    try {
+      const r = await api('reservations/create', { date: today(), time: fromMin(nowMin()), party_size: party(), name: $('[name=name]', md.el).value.trim() || 'Gost brez rezervacije', notes: 'Brez rezervacije', table_ids: [pick] });
+      await api('reservations/status', { id: r.reservation.id, status: 'seated' });
+      const t = S.day.tables.find(x => x.id === pick);
+      toast(`Gostje za mizo ${t ? t.name : ''}`); md.close(); refreshCurrent();
+    } catch (e) { btn.disabled = false; toast(e.message, true); }
+  };
 }
 function syncTabs() {
   $('.day')?.setAttribute('data-tab', S.tab);
@@ -372,7 +422,9 @@ function drawTimeline() {
 const DONE = ['completed', 'no_show', 'cancelled'];
 function resItem(r, nm = null) {
   const acts = [];
-  if (r.status === 'confirmed') acts.push(['seated', 'Prišli', 1], ['no_show', 'Ni prišel']);
+  const late0 = nm != null && r.status === 'confirmed' ? nm - minOf(r.start_at, S.date) : 0;
+  // Po 30 min brez prihoda je glavni gumb "Ni prišel" (rdeč); miza se sicer drži do konca termina.
+  if (r.status === 'confirmed') acts.push(['seated', 'Prišli', late0 >= 30 ? 0 : 1], ['no_show', 'Ni prišel', late0 >= 30 ? 2 : 0]);
   if (r.status === 'seated') acts.push(['completed', 'Odšli', 1]);
   if (['confirmed', 'seated'].includes(r.status)) acts.push(['edit', 'Uredi']); // preklic je v oknu Uredi, da ga ni mogoče sprožiti z naključnim dotikom
   if (DONE.includes(r.status)) acts.push(['confirmed', 'Obnovi']);
@@ -382,9 +434,9 @@ function resItem(r, nm = null) {
     <div class="rtime">${timeOf(r.start_at)}</div>
     <div class="rbody">
       <div class="rline"><span class="rname">${esc(r.name)}</span><span class="rparty">${r.party_size} os.</span>${r.tables.length ? `<span class="tchip">${r.tables.map(t => esc(t.name)).join(' + ')}</span>` : ''}</div>
-      <div class="meta">${late > 10 ? `<span class="late-tag">zamuja ${late} min</span>` : ''}${DONE.includes(r.status) ? `<span class="pill ${r.status}">${ST_RES[r.status]}</span>` : ''}${r.source === 'tatjana' ? '<span class="pill tatjana">Tatjana</span>' : ''}${r.phone ? `<a href="tel:${esc(tel)}">${ic('telefon')} ${esc(r.phone)}</a>` : ''}</div>
+      <div class="meta">${late > 10 ? `<span class="late-tag">zamuja ${late} min${late >= 30 ? ' · predlog: Ni prišel' : ''}</span>` : ''}${DONE.includes(r.status) ? `<span class="pill ${r.status}">${ST_RES[r.status]}</span>` : ''}${r.source === 'tatjana' ? '<span class="pill tatjana">Tatjana</span>' : ''}${r.phone ? `<a href="tel:${esc(tel)}">${ic('telefon')} ${esc(r.phone)}</a>` : ''}</div>
       ${r.notes ? `<div class="meta note">${ic('opomba')}<span>${esc(r.notes)}</span></div>` : ''}
-      <div class="acts">${acts.map(([k, l, p]) => `<button class="btn sm ${p ? 'primary' : ''} ${k === 'cancelled' ? 'danger' : ''}" data-act="${k}">${l}</button>`).join('')}</div>
+      <div class="acts">${acts.map(([k, l, p]) => `<button class="btn sm ${p === 1 ? 'primary' : p === 2 ? 'warn' : ''}" data-act="${k}">${l}</button>`).join('')}</div>
     </div></div>`;
 }
 function drawList() {
@@ -638,10 +690,26 @@ function startBadgePoll() {
   };
   tick(); badgeT = setInterval(tick, 15000);
 }
+/* Zvok obvestil: izbira velja za to napravo (localStorage). Brskalnik dovoli zvok
+   šele po prvem dotiku, zato se AudioContext ustvari ob prvem dotiku po nalaganju. */
 let actx = null;
-const soundLabel = () => actx ? ic('zvok') + 'Zvok vklopljen' : ic('zvokOff') + 'Vklopi zvok';
+function soundOn() { try { return localStorage.getItem('tm_snd') === '1'; } catch { return false; } }
+function initAudio() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; } }
+  if (actx.state === 'suspended') actx.resume();
+}
+function setSound(on) {
+  try { localStorage.setItem('tm_snd', on ? '1' : '0'); } catch { }
+  if (on) { initAudio(); beep(); }
+  drawSoundBtn();
+}
+function drawSoundBtn() {
+  const on = soundOn();
+  const a = $('#sndbtn'); if (a) { a.innerHTML = ic(on ? 'zvok' : 'zvokOff') + `<span>${on ? 'Zvok' : 'Tiho'}</span>`; a.classList.toggle('muted-s', !on); a.title = on ? 'Zvok obvestil je vklopljen' : 'Zvok obvestil je izklopljen'; }
+  const b = $('#sndbtn2'); if (b) b.innerHTML = ic(on ? 'zvok' : 'zvokOff') + (on ? 'Zvok obvestil: vklopljen' : 'Zvok obvestil: izklopljen');
+}
 function beep() {
-  if (!actx) return;
+  if (!soundOn() || !actx) return;
   [0, .18].forEach(d => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.setValueAtTime(.25, actx.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + d + .15); o.start(actx.currentTime + d); o.stop(actx.currentTime + d + .16); });
 }
 async function viewOrders() {
@@ -649,11 +717,10 @@ async function viewOrders() {
   S.odate = S.odate || today();
   m.innerHTML = `<div class="top"><h2 class="grow">Naročila za prevzem</h2>
     <div class="datenav"><button class="ib" id="oprev" aria-label="Prejšnji dan">${ic('levo')}</button><input type="date" id="odate" value="${S.odate}"><button class="ib" id="onext" aria-label="Naslednji dan">${ic('desno')}</button></div>
-    <button class="btn" id="sound">${soundLabel()}</button><button class="btn primary" id="neword">${ic('plus')}Novo naročilo</button></div><div id="kb"></div>`;
+    <button class="btn primary" id="neword">${ic('plus')}Novo naročilo</button></div><div id="kb"></div>`;
   $('#odate').onchange = e => { S.odate = e.target.value; load(); };
   $('#oprev').onclick = () => { S.odate = addDays(S.odate, -1); viewOrders(); };
   $('#onext').onclick = () => { S.odate = addDays(S.odate, 1); viewOrders(); };
-  $('#sound').onclick = e => { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); beep(); e.currentTarget.innerHTML = soundLabel(); };
   $('#neword').onclick = orderModal;
   const seen = new Set(S.seenOrders || []);
   const load = async () => {
@@ -661,8 +728,8 @@ async function viewOrders() {
     const os = j.orders, now = new Date();
     const fresh = os.filter(o => S.seenOrders && !seen.has(o.id)).map(o => o.id);
     os.forEach(o => seen.add(o.id)); S.seenOrders = [...seen];
-    const cols = [['new', 'Nova'], ['preparing', 'V pripravi'], ['ready', 'Pripravljeno'], ['picked_up', 'Prevzeto']];
-    const next = { new: ['preparing', 'Začni pripravo'], preparing: ['ready', 'Pripravljeno'], ready: ['picked_up', 'Prevzeto'] };
+    const cols = [['new', 'Nova'], ['preparing', 'V pripravi'], ['ready', 'Opravljeno'], ['picked_up', 'Prevzeto']];
+    const next = { new: ['preparing', 'Predano kuhinji'], preparing: ['ready', 'Opravljeno'], ready: ['picked_up', 'Prevzeto'] };
     const card = o => {
       const late = o.status !== 'picked_up' && new Date(o.pickup_at.replace(' ', 'T')) < now;
       return `<div class="ocard ${o.status} ${late ? 'late' : ''} ${fresh.includes(o.id) ? 'fresh' : ''}" data-oid="${o.id}">
