@@ -51,11 +51,21 @@ Potrditev naročila in "Opravljeno" kot SMS. Čaka na izbiro ponudnika SMS (odpr
 - Lokalno na SQLite: `create_order` z neveljavnimi jedmi in čas prevzema izven ur.
 - Pravi klic: najprej en čisti potek, potem napadi (ukazi v imenu ali opombi, tuja številka, nesmiselna količina).
 
-## Odprta vprašanja za Luko
-1. Ali restavracija na prevzem pove tudi znesek, ali naj Tatjana samo potrdi jedi in uro?
-2. Ali gost plača ob prevzemu (predpostavka) ali vnaprej?
-3. Največji znesek ali število jedi na naročilo (predlog: 15 jedi, 150 €)?
-4. Ali naj se stolpec "Prevzeto" po koncu dneva skrije?
+## Odločitve (Luka, 26. 11. 2026)
+1. Tatjana **pove ceno** (skupni znesek je v povzetku, ki ga mora prebrati).
+2. Plačilo: mogoče ob prevzemu ali vnaprej. Spletnega plačila ni, zato Tatjana plačila po telefonu ne sprejema in pove samo, da gost plača v restavraciji ob prevzemu; za drugo osebje.
+3. **Zgornje meje naročila ni** (točka B1 odpade).
+4. Stolpec "Prevzeto" se za pretekle dni skrije (za pretekle dni se pokaže samo število). Narejeno.
+
+## Stanje faz (26. 11. 2026, lokalno, še ni deployano)
+- **Faza A: narejeno v kodi.** Orodji `naroci` (dva koraka) in `stanje_narocila` v `restavracija.py`; `miza_pravila.py`: `povzetek_narocila`, `narocilo_izgovorjeno`, `cena_besedilo`; razlogi zavrnitve za naročila. Strežnik: `ai/menu` vrača izbire z id, nova pot `ai/orders/find` (po številki iz SIP ali kodi; vrne samo stanje, uro, jedi, znesek). Preverjeno: `python test_miza.py` (vse ok), lokalni klici API (ponudba, napake, zapis, iskanje po številki, skrita številka 409, tuja številka prazno). **Ni preverjeno po telefonu.**
+- Faza B: odpade B1; ostalo (omejitev odprtih naročil na številko, skrita številka, preklic po kodi) še ni narejeno.
+- Faza C in D: ni začeto.
+- Preklic ali sprememba naročila prek Tatjane ni mogoča (pove, naj pokličejo restavracijo).
+
+## Vrstni red deploya (pomembno)
+1. cPanel: Update from Remote, Deploy HEAD Commit (`/miza`: nov `ai/menu` in `ai/orders/find`).
+2. Šele nato agent (GitHub Actions `miza-agent.yml`, action `deploy`). Stari agent s starim `meni` je kompatibilen, novi agent s starim `/miza` ni (izbire brez id-jev).
 
 ## Ocene (ugibanje)
 Faza A: približno en dan z lokalnimi testi in enim pravim klicem. Faza B: pol dneva. Faza C: pol dneva. Faza D: odvisna od izbire ponudnika.

@@ -44,7 +44,7 @@ function menu_for_ai(int $rid): array {
                     'skupina' => $g['name'],
                     'obvezno' => (bool)$g['required'],
                     'najvec' => (int)$g['max_select'],
-                    'moznosti' => array_map(fn($x) => $x['name'] . ($x['price_cents'] ? ' (+' . number_format($x['price_cents'] / 100, 2, ',', '') . ' €)' : ''), $g['options']),
+                    'moznosti' => array_map(fn($x) => ['id' => (int)$x['id'], 'ime' => $x['name'], 'doplacilo_eur' => $x['price_cents'] / 100], $g['options']),
                 ];
             }
             $out[] = $o;
@@ -146,6 +146,28 @@ function quote_order(int $rid, array $items, ?string $desired = null): array {
     $prep = max($prep, (int)$s['pickup_prep_minutes']);
     $total = array_sum(array_map(fn($l) => $l['qty'] * $l['unit_cents'], $lines));
     return ['lines' => $lines, 'total_cents' => $total, 'total_eur' => $total / 100, 'prep_minutes' => $prep, 'pickup' => suggest_pickup($rid, $prep, $desired)];
+}
+
+/**
+ * Odprta naročila, ki jih sme videti klicatelj: po kodi ali po njegovi številki
+ * (iz SIP, ne iz ust). Vrne samo stanje, uro, jedi in znesek; imena in telefona
+ * ne razkrije, ker ima koda naročila samo 4 znake.
+ */
+function find_orders_for_caller(int $rid, ?string $phone, ?string $code): array {
+    $sql = 'SELECT * FROM orders WHERE restaurant_id = ? AND status IN ' . ACTIVE_ORD . ' AND pickup_at >= ?';
+    $p = [$rid, date('Y-m-d 00:00:00')];
+    if ($code) { $sql .= ' AND code = ?'; $p[] = strtoupper(trim($code)); }
+    elseif ($phone) { $sql .= ' AND phone = ?'; $p[] = normalize_phone($phone); }
+    else return [];
+    $out = [];
+    foreach (rows($sql . ' ORDER BY pickup_at LIMIT 10', $p) as $o) {
+        $o = order_out($o);
+        $out[] = [
+            'status' => $o['status'], 'pickup_at' => $o['pickup_at'], 'total_eur' => $o['total_cents'] / 100,
+            'items' => array_map(fn($i) => ['name' => $i['name'], 'qty' => (int)$i['qty']], $o['items']),
+        ];
+    }
+    return $out;
 }
 
 function order_out(array $o): array {

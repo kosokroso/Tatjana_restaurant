@@ -292,6 +292,8 @@ code.key{background:var(--sunk);padding:7px 10px;border-radius:6px;font:12.5px v
   .day[data-tab=time] .dtop{display:none}
 }
 
+@media (min-width:1181px){.kanban.k3{grid-template-columns:repeat(3,minmax(220px,1fr))}}
+
 /* telefon in tablica ob pokončnem: spodnja vrstica, en stolpec */
 @media (max-width:899px){
   .shell{grid-template-columns:1fr}

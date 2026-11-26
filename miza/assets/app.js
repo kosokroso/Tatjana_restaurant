@@ -728,7 +728,9 @@ async function viewOrders() {
     const os = j.orders, now = new Date();
     const fresh = os.filter(o => S.seenOrders && !seen.has(o.id)).map(o => o.id);
     os.forEach(o => seen.add(o.id)); S.seenOrders = [...seen];
-    const cols = [['new', 'Nova'], ['preparing', 'V pripravi'], ['ready', 'Opravljeno'], ['picked_up', 'Prevzeto']];
+    // Stolpec "Prevzeto" je viden samo za danes in prihodnje dni; za pretekle dni samo število.
+    const past = S.odate < today();
+    const cols = [['new', 'Nova'], ['preparing', 'V pripravi'], ['ready', 'Opravljeno'], ['picked_up', 'Prevzeto']].filter(c => !(past && c[0] === 'picked_up'));
     const next = { new: ['preparing', 'Predano kuhinji'], preparing: ['ready', 'Opravljeno'], ready: ['picked_up', 'Prevzeto'] };
     const card = o => {
       const late = o.status !== 'picked_up' && new Date(o.pickup_at.replace(' ', 'T')) < now;
@@ -742,7 +744,9 @@ async function viewOrders() {
         ${next[o.status] ? `<button class="btn sm primary" data-st="${next[o.status][0]}">${next[o.status][1]}</button>` : ''}</div></div>`;
     };
     const cancelled = os.filter(o => o.status === 'cancelled').length;
-    $('#kb').innerHTML = `<div class="kanban">${cols.map(([k, l]) => { const list = os.filter(o => o.status === k); return `<div class="col"><h3>${l}<span class="muted">${list.length}</span></h3>${list.map(card).join('') || '<div class="empty small">Prazno</div>'}</div>`; }).join('')}</div>
+    const pickedUp = os.filter(o => o.status === 'picked_up').length;
+    $('#kb').innerHTML = `<div class="kanban ${cols.length === 3 ? 'k3' : ''}">${cols.map(([k, l]) => { const list = os.filter(o => o.status === k); return `<div class="col"><h3>${l}<span class="muted">${list.length}</span></h3>${list.map(card).join('') || '<div class="empty small">Prazno</div>'}</div>`; }).join('')}</div>
+      ${past && pickedUp ? `<p class="muted small">Prevzetih: ${pickedUp}</p>` : ''}
       ${cancelled ? `<p class="muted small">Preklicanih: ${cancelled}</p>` : ''}`;
     $$('#kb [data-st]').forEach(b => b.onclick = async () => {
       const id = +b.closest('[data-oid]').dataset.oid;

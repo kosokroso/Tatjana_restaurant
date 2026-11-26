@@ -87,6 +87,13 @@ try {
             case 'ai/orders/quote':
                 $desired = !empty($b['pickup_time']) ? (strlen($b['pickup_time']) <= 5 ? date('Y-m-d') . ' ' . $b['pickup_time'] : $b['pickup_time']) : null;
                 out(['ok' => true] + quote_order($rid, $b['items'] ?? [], $desired));
+            case 'ai/orders/find':
+                $code = strtoupper(trim((string)($b['code'] ?? '')));
+                $caller = trim((string)($b['caller_phone'] ?? ''));
+                if ($code !== '') $found = find_orders_for_caller($rid, null, $code);
+                elseif ($caller !== '' && preg_match('/\d{6,}/', $caller)) $found = find_orders_for_caller($rid, $caller, null);
+                else throw new BookingError('missing_field', 'Povej številko naročila.');
+                out(['ok' => true, 'orders' => $found]);
             case 'ai/orders':
                 $d = $b;
                 if (empty($d['phone']) && !empty($b['caller_phone'])) $d['phone'] = $b['caller_phone'];
