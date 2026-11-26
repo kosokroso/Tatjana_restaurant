@@ -15,13 +15,31 @@ function out($data, int $code = 200): never {
 function fail(string $code, string $msg, int $http = 400, array $extra = []): never {
     out(['ok' => false, 'error' => $code, 'message' => $msg] + $extra, $http);
 }
-function body(): array {
+function body(?array $set = null): array {
     static $b = null;
+    if ($set !== null) $b = $set;
     if ($b === null) {
         $raw = file_get_contents('php://input');
         $b = $raw ? (json_decode($raw, true) ?: []) : [];
         $b = array_merge($_GET, $_POST, $b);
     }
+    return $b;
+}
+/**
+ * Vhod poti ai/*: besedilna polja morajo biti nizi omejene dolžine, datum, ura in
+ * število oseb pa v pričakovani obliki. Kar ni, se zavrže, zato ga strežnik
+ * obravnava kot manjkajoče polje (409), ne kot napako strežnika (500).
+ */
+function ai_clean(array $b): array {
+    $max = ['name' => 80, 'notes' => 500, 'phone' => 30, 'caller_phone' => 30, 'code' => 12, 'zone' => 40, 'zone_pref' => 40];
+    foreach ($max as $k => $n) {
+        if (!array_key_exists($k, $b)) continue;
+        if (is_string($b[$k])) $b[$k] = mb_substr($b[$k], 0, $n);
+        else unset($b[$k]);
+    }
+    if (isset($b['date']) && !(is_string($b['date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $b['date']))) unset($b['date']);
+    if (isset($b['time']) && !(is_string($b['time']) && preg_match('/^\d{1,2}:\d{2}$/', $b['time']))) unset($b['time']);
+    if (isset($b['party_size']) && !(is_int($b['party_size']) || (is_string($b['party_size']) && preg_match('/^\d{1,4}$/', $b['party_size'])))) unset($b['party_size']);
     return $b;
 }
 function need(string $k) {
@@ -42,6 +60,7 @@ try {
         if (!$rest) fail('unauthorized', 'Neveljaven API ključ.', 401);
         $rid = (int)$rest['id'];
         $b = body();
+        $b = body(ai_clean($b));
 
         switch ($route) {
             case 'ai/info':
@@ -85,11 +104,10 @@ try {
             case 'ai/menu':
                 out(['ok' => true, 'menu' => menu_for_ai($rid)]);
             case 'ai/orders/quote':
-                $desired = !empty($b['pickup_time']) ? (strlen($b['pickup_time']) <= 5 ? date('Y-m-d') . ' ' . $b['pickup_time'] : $b['pickup_time']) : null;
-                out(['ok' => true] + quote_order($rid, $b['items'] ?? [], $desired));
+                out(['ok' => true] + quote_order($rid, $b['items'] ?? [], parse_pickup_wish($b['pickup_time'] ?? null)));
             case 'ai/orders/find':
-                $code = strtoupper(trim((string)($b['code'] ?? '')));
-                $caller = trim((string)($b['caller_phone'] ?? ''));
+                $code = is_string($b['code'] ?? null) ? strtoupper(trim($b['code'])) : '';
+                $caller = is_string($b['caller_phone'] ?? null) ? trim($b['caller_phone']) : '';
                 if ($code !== '') $found = find_orders_for_caller($rid, null, $code);
                 elseif ($caller !== '' && preg_match('/\d{6,}/', $caller)) $found = find_orders_for_caller($rid, $caller, null);
                 else throw new BookingError('missing_field', 'Povej številko naročila.');
@@ -97,6 +115,7 @@ try {
             case 'ai/orders':
                 $d = $b;
                 if (empty($d['phone']) && !empty($b['caller_phone'])) $d['phone'] = $b['caller_phone'];
+                unset($d['accept_suggested']);
                 $o = create_order($rid, $d, 'tatjana');
                 out(['ok' => true, 'order' => ['code' => $o['code'], 'pickup_at' => $o['pickup_at'], 'total_eur' => $o['total_cents'] / 100, 'items' => $o['items']]]);
         }

@@ -57,7 +57,35 @@ Potrditev naročila in "Opravljeno" kot SMS. Čaka na izbiro ponudnika SMS (odpr
 3. **Zgornje meje naročila ni** (točka B1 odpade).
 4. Stolpec "Prevzeto" se za pretekle dni skrije (za pretekle dni se pokaže samo število). Narejeno.
 
-## Stanje faz (26. 11. 2026, lokalno, še ni deployano)
+## Napadi na API (26. 11. 2026, lokalno na SQLite, ne po telefonu)
+
+Skript je napadel `ai/orders`, `ai/orders/quote`, `ai/orders/find` in rezervacije z nesmiselnimi vhodi. Najdeno in popravljeno (`miza/lib/orders.php`, `miza/api.php`):
+
+| Napad | Prej | Zdaj |
+|---|---|---|
+| `qty` 1e30 ali 999999999 | naročilo sprejeto, znesek negativen ali 11 milijard € (prekoračitev) | 409 `invalid_qty` (celo število 1 do 99 na postavko) |
+| `qty` 0, -5, "abc", 1.9 | tiho spremenjeno v 1 | 409 `invalid_qty` |
+| `items` niz, `pickup_time` smeti ali seznam, `name` ali `phone` seznam | 500 | 409 z razlogom |
+| ime in opombe po 100 000 znakov | shranjeno | ime 80, opombe 500, opomba postavke 200 znakov |
+| ime jedi "a" | ujemanje z naključno jedjo | nepopolno ime velja od 3 znakov |
+| naročilo brez telefona ali s skrito številko | sprejeto | 409; gost mora izgovoriti številko |
+| 5 naročil s iste številke | vsa sprejeta | največ 3 odprta, nato `too_many_open_orders` |
+| polja rezervacij (ime, datum, ura, osebe) napačnega tipa | 500 ali tiho `party_size` 1 | 409 `missing_field`; besedilo skrajšano |
+| polje `code` ali `caller_phone` kot seznam | PHP opozorilo v odgovoru | 409 |
+
+Že prej odporno: cene iz strežnika (polja `unit_cents`, `total_cents` v telesu se ne upoštevajo), SQL injekcija (parametrizirano), XSS v imenu ali opombi (vmesnik uporablja `esc()`), iskanje po `code` brez nadomestnih znakov, tuja številka (prazen seznam), ukazi v opombah (shranjeno kot besedilo, brez učinka), napačen ali manjkajoč ključ (401).
+
+Odločitev: omejitev 99 porcij na postavko je zaščita pred prekoračitvijo, ne poslovna zgornja meja (Luka je rekel, da meje naročila ni). Število postavk in znesek sta še vedno neomejena.
+
+### Napad na potrditev (agent, `miza_pravila.je_cista_potrditev`)
+
+Preizkus 28 stavkov (skripta v scratchpadu, zdaj kot `preveri_napade_na_potrditev` v `test_miza.py`): 17 jih je bilo napačno sprejetih kot potrditev, npr. "Ni v redu" (vsebuje "v redu"), "Ja, dodaj še eno pico", "Ja, koliko je to skupaj?", "Ja, ob osmih", "Mogoče ja". Prej je bil seznam prepovedanih besed, zdaj seznam dovoljenih: vsaka beseda mora biti potrditev ali polnilo (`_POLNILA`). Cena: kakšna redka legitimna potrditev v drugačnih besedah se zavrne, kar stane en ponovljen povzetek. Velja tudi za rezervacije in odpoved.
+
+Znana neizpolnjena tveganja (odločitev je tvoja): (1) skrita številka: gost lahko izgovori tujo številko in naročilo gre nanjo; omejitev 3 odprtih velja po številki, torej jo obide z različnimi številkami; (2) poplava naročil: popravljeno, največ 15 neobravnavanih (status Nova) naročil Tatjane na restavracijo, nato `orders_busy`; ko osebje naročila premakne v "V pripravi", se mesta sprostijo, osebje samo ni omejeno (`MAX_NEW_FROM_PHONE` v `orders.php`, preizkušeno lokalno: 15 sprejetih, 3 zavrnjena); (3) `narocilo_izgovorjeno` preverja jedi, znesek in uro, količine samo posredno prek zneska.
+
+**Še ni preizkušeno:** pravi klic (ukazi v govoru, izsiljevanje popusta, glasno branje kode, prekinjanje med povzetkom).
+
+## Stanje faz (26. 11. 2026)
 - **Faza A: narejeno v kodi.** Orodji `naroci` (dva koraka) in `stanje_narocila` v `restavracija.py`; `miza_pravila.py`: `povzetek_narocila`, `narocilo_izgovorjeno`, `cena_besedilo`; razlogi zavrnitve za naročila. Strežnik: `ai/menu` vrača izbire z id, nova pot `ai/orders/find` (po številki iz SIP ali kodi; vrne samo stanje, uro, jedi, znesek). Preverjeno: `python test_miza.py` (vse ok), lokalni klici API (ponudba, napake, zapis, iskanje po številki, skrita številka 409, tuja številka prazno). **Ni preverjeno po telefonu.**
 - Faza B: odpade B1; ostalo (omejitev odprtih naročil na številko, skrita številka, preklic po kodi) še ni narejeno.
 - Faza C in D: ni začeto.

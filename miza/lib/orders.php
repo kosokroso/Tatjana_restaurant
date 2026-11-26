@@ -98,9 +98,34 @@ function suggest_pickup(int $rid, int $prepMinutes, ?string $desired = null): ?a
     return null;
 }
 
+const MAX_LINE_QTY = 99;       // največ porcij ene jedi v eni postavki (zaščita pred prekoračitvijo)
+const MAX_NAME = 80;
+const MAX_NOTES = 500;
+const MAX_ITEM_NOTES = 200;
+const MAX_NEW_FROM_PHONE = 15;   // neobravnavanih (status new) naročil Tatjane na restavracijo: zaščita pred poplavo
+const MAX_OPEN_PER_PHONE = 3;  // odprta naročila ene telefonske številke (Tatjana)
+
+/** Količina mora biti celo število 1..99; sicer zavrnemo (ne popravljamo tiho). */
+function order_qty($v, string $dish): int {
+    $ok = is_int($v) || (is_float($v) && is_finite($v) && $v == floor($v)) || (is_string($v) && preg_match('/^\d{1,6}$/', trim($v)));
+    $n = $ok ? (float)$v : 0.0;
+    if (!$ok || $n < 1 || $n > MAX_LINE_QTY) throw new BookingError('invalid_qty', "Količina za $dish mora biti od 1 do " . MAX_LINE_QTY . '.');
+    return (int)$n;
+}
+
+/** Želeni čas prevzema: "H:i" (danes) ali "Y-m-d H:i[:s]". Vse drugo zavrnemo. */
+function parse_pickup_wish($v): ?string {
+    if ($v === null || $v === '' || $v === false) return null;
+    if (!is_string($v)) throw new BookingError('invalid_time', 'Neveljaven čas prevzema.');
+    $v = trim(str_replace('T', ' ', $v));
+    if (preg_match('/^\d{1,2}:\d{2}$/', $v)) $v = date('Y-m-d') . ' ' . $v;
+    if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}(:\d{2})?$/', $v) || strtotime($v) === false) throw new BookingError('invalid_time', 'Neveljaven čas prevzema.');
+    return $v;
+}
+
 /** Razreši postavke naročila: id ali ime jedi, izbire po id ali imenu. */
-function resolve_order_items(int $rid, array $items): array {
-    if (!$items) throw new BookingError('empty_order', 'Naročilo nima jedi.');
+function resolve_order_items(int $rid, $items): array {
+    if (!is_array($items) || !$items) throw new BookingError('empty_order', 'Naročilo nima jedi.');
     $menu = [];
     foreach (get_menu($rid) as $c) foreach ($c['items'] as $i) $menu[$i['id']] = $i;
     $byName = [];
@@ -109,14 +134,18 @@ function resolve_order_items(int $rid, array $items): array {
     $lines = [];
     $prep = 0;
     foreach ($items as $it) {
+        if (!is_array($it)) throw new BookingError('unknown_item', 'Jedi ni na meniju: ?');
         $m = null;
-        if (!empty($it['item_id']) && isset($menu[(int)$it['item_id']])) $m = $menu[(int)$it['item_id']];
-        elseif (!empty($it['name'])) {
-            $n = mb_strtolower(trim($it['name']));
+        $iid = $it['item_id'] ?? null;
+        $iname = $it['name'] ?? null;
+        if (is_scalar($iid) && !empty($iid) && isset($menu[(int)$iid])) $m = $menu[(int)$iid];
+        elseif (is_string($iname) && trim($iname) !== '') {
+            $n = mb_strtolower(trim($iname));
             $m = $byName[$n] ?? null;
-            if (!$m) foreach ($byName as $k => $v) if (str_contains($k, $n) || str_contains($n, $k)) { $m = $v; break; }
+            // Nepopolno ime se ujema samo, če je dovolj dolgo (ne "a" ali "ž").
+            if (!$m && mb_strlen($n) >= 3) foreach ($byName as $k => $v) if (str_contains($k, $n) || str_contains($n, $k)) { $m = $v; break; }
         }
-        if (!$m) throw new BookingError('unknown_item', 'Jedi ni na meniju: ' . ($it['name'] ?? $it['item_id'] ?? '?'));
+        if (!$m) throw new BookingError('unknown_item', 'Jedi ni na meniju: ' . mb_substr((string)(is_scalar($iname) ? $iname : (is_scalar($iid) ? $iid : '?')), 0, 60));
         if (!$m['available'] || !$m['pickup']) throw new BookingError('unavailable_item', "Jed {$m['name']} trenutno ni na voljo.");
 
         $chosen = array_map(fn($x) => is_array($x) ? ($x['id'] ?? $x['name'] ?? '') : $x, (array)($it['options'] ?? []));
@@ -133,14 +162,15 @@ function resolve_order_items(int $rid, array $items): array {
             if (count($picked) > (int)$g['max_select']) throw new BookingError('too_many_options', "Za {$m['name']} lahko izberete največ {$g['max_select']} pri {$g['name']}.");
             foreach ($picked as $o) { $unit += (int)$o['price_cents']; $names[] = $o['name']; }
         }
-        $qty = max(1, (int)($it['qty'] ?? 1));
-        $lines[] = ['item_id' => $m['id'], 'name' => $m['name'], 'qty' => $qty, 'unit_cents' => $unit, 'options_text' => $names ? implode(', ', $names) : null, 'notes' => $it['notes'] ?? null];
+        $qty = order_qty($it['qty'] ?? 1, $m['name']);
+        $inotes = is_string($it['notes'] ?? null) ? trim(mb_substr($it['notes'], 0, MAX_ITEM_NOTES)) : '';
+        $lines[] = ['item_id' => $m['id'], 'name' => $m['name'], 'qty' => $qty, 'unit_cents' => $unit, 'options_text' => $names ? implode(', ', $names) : null, 'notes' => $inotes !== '' ? $inotes : null];
         $prep = max($prep, (int)($m['prep_minutes'] ?? 0));
     }
     return [$lines, $prep];
 }
 
-function quote_order(int $rid, array $items, ?string $desired = null): array {
+function quote_order(int $rid, $items, ?string $desired = null): array {
     $s = restaurant_settings(get_restaurant($rid));
     [$lines, $prep] = resolve_order_items($rid, $items);
     $prep = max($prep, (int)$s['pickup_prep_minutes']);
@@ -179,11 +209,19 @@ function order_out(array $o): array {
 
 /** $d: name, phone, items[], pickup_time (Y-m-d H:i ali H:i za danes), notes */
 function create_order(int $rid, array $d, string $source, bool $staff = false): array {
-    if (empty($d['name'])) throw new BookingError('missing_field', 'Manjka ime.');
-    $desired = null;
-    if (!empty($d['pickup_time'])) {
-        $desired = strlen($d['pickup_time']) <= 5 ? date('Y-m-d') . ' ' . $d['pickup_time'] : $d['pickup_time'];
+    $name = is_string($d['name'] ?? null) ? trim(mb_substr($d['name'], 0, MAX_NAME)) : '';
+    if ($name === '') throw new BookingError('missing_field', 'Manjka ime.');
+    $notes = is_string($d['notes'] ?? null) ? trim(mb_substr($d['notes'], 0, MAX_NOTES)) : '';
+    $phone = is_string($d['phone'] ?? null) ? normalize_phone($d['phone']) : '';
+    if (!$staff) {
+        // Telefonski vir: brez uporabne številke naročila ne sprejmemo, odprtih je omejeno število.
+        if (!preg_match('/\d{6,}/', $phone)) throw new BookingError('missing_field', 'Manjka telefonska številka.');
+        $open = (int)val('SELECT COUNT(*) FROM orders WHERE restaurant_id = ? AND phone = ? AND status IN ' . ACTIVE_ORD, [$rid, $phone]);
+        if ($open >= MAX_OPEN_PER_PHONE) throw new BookingError('too_many_open_orders', 'S te številke je že več odprtih naročil.');
+        $fresh = (int)val("SELECT COUNT(*) FROM orders WHERE restaurant_id = ? AND source = 'tatjana' AND status = 'new'", [$rid]);
+        if ($fresh >= MAX_NEW_FROM_PHONE) throw new BookingError('orders_busy', 'Kuhinja ima zdaj preveč neobravnavanih naročil.');
     }
+    $desired = parse_pickup_wish($d['pickup_time'] ?? null);
     $pdo = db();
     $pdo->beginTransaction();
     try {
@@ -199,10 +237,10 @@ function create_order(int $rid, array $d, string $source, bool $staff = false): 
             $pickupAt = $quote['pickup']['pickup_at'];
         }
         $id = insert('orders', [
-            'restaurant_id' => $rid, 'code' => random_code(4), 'name' => trim($d['name']),
-            'phone' => !empty($d['phone']) ? normalize_phone($d['phone']) : null,
+            'restaurant_id' => $rid, 'code' => random_code(4), 'name' => $name,
+            'phone' => $phone !== '' ? $phone : null,
             'pickup_at' => $pickupAt, 'status' => 'new', 'total_cents' => $quote['total_cents'],
-            'notes' => $d['notes'] ?? null, 'source' => $source, 'created_at' => now_str(), 'updated_at' => now_str(),
+            'notes' => $notes !== '' ? $notes : null, 'source' => $source, 'created_at' => now_str(), 'updated_at' => now_str(),
         ]);
         foreach ($quote['lines'] as $l) insert('order_items', ['order_id' => $id] + $l);
         $pdo->commit();
