@@ -22,11 +22,60 @@ function minOf(dt, baseDate) { let m = toMin(timeOf(dt)); if (dt.slice(0, 10) > 
 function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
 function dateLabel(s) { const d = new Date(s + 'T12:00:00'); return DAYS[d.getDay() || 7] + ', ' + d.getDate() + '. ' + (d.getMonth() + 1) + '.'; }
 
+/* ---------------- brez povezave (PWA) ----------------
+   Brez omrežja aplikacija samo bere: pokaže zadnje podatke, ki jih je ta naprava
+   dobila od strežnika, in jasno pove, od kdaj so. Spreminjanje ni mogoče, ker bi
+   Tatjana medtem isto mizo lahko oddala po telefonu. Shranjeni so samo odgovori
+   za branje (ne nastavitve z API ključem); ob odjavi se pobrišejo. */
+const BRANJE = new Set(['auth/me', 'day', 'tables', 'reservations/list', 'menu', 'orders']);
+const OFF = 'tm_off:', OFF_MAX = 60;
+const offKey = (route, data) => OFF + route + ':' + JSON.stringify(data);
+function offKeys() { try { return Object.keys(localStorage).filter(k => k.startsWith(OFF)); } catch { return []; } }
+function offLoad(route, data) { try { return JSON.parse(localStorage.getItem(offKey(route, data)) || 'null'); } catch { return null; } }
+function offClear() { offKeys().forEach(k => { try { localStorage.removeItem(k); } catch { } }); }
+function offTrim(keep) {
+  const ks = offKeys(); if (ks.length <= keep) return;
+  ks.map(k => { let t = 0; try { t = JSON.parse(localStorage.getItem(k)).t || 0; } catch { } return [k, t]; })
+    .sort((a, b) => a[1] - b[1]).slice(0, ks.length - keep).forEach(([k]) => { try { localStorage.removeItem(k); } catch { } });
+}
+function offSave(route, data, j) {
+  const v = JSON.stringify({ t: Date.now(), j });
+  try { localStorage.setItem(offKey(route, data), v); offTrim(OFF_MAX); }
+  catch { offTrim(Math.floor(OFF_MAX / 2)); try { localStorage.setItem(offKey(route, data), v); } catch { } }
+}
+/* Pas na vrhu zaslona. t = čas prikazanih podatkov (ms), true = čas ni znan, null = povezava je. */
+function setOffline(t) {
+  S.offlineAt = t;
+  document.body.classList.toggle('offline', !!t);
+  let b = $('#offbar');
+  if (!t) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement('div'); b.id = 'offbar'; b.setAttribute('role', 'status'); document.body.prepend(b); }
+  let kdaj = '';
+  if (typeof t === 'number') { const d = new Date(t); kdaj = ' Prikazani podatki so od ' + (ymd(d) === today() ? '' : d.getDate() + '. ' + (d.getMonth() + 1) + '. ') + d.toTimeString().slice(0, 5) + '.'; }
+  b.textContent = 'Brez povezave.' + kdaj + ' Spreminjanje ni mogoče, dokler se povezava ne vrne.';
+  document.documentElement.style.setProperty('--offh', b.offsetHeight + 'px');
+}
+function brezPovezave(route, data) {
+  const c = BRANJE.has(route) && offLoad(route, data);
+  if (c) { setOffline(c.t); return Object.assign(c.j, { _iz: c.t }); }
+  if (!S.offlineAt) setOffline(true);
+  throw new Error(BRANJE.has(route) ? 'Brez povezave. Za ta pogled na tej napravi ni shranjenih podatkov.' : 'Brez povezave. Spreminjanje ni mogoče, dokler se povezava ne vrne.');
+}
+
 async function api(route, data = {}) {
-  const r = await fetch('api.php?r=' + route, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-TM': '1' }, body: JSON.stringify(data), credentials: 'same-origin' });
+  let r;
+  try {
+    // Brez časovne meje bi aplikacija ob slabem signalu čakala minuto, preden pokaže shranjeno.
+    const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 10000);
+    r = await fetch('api.php?r=' + route, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-TM': '1' }, body: JSON.stringify(data), credentials: 'same-origin', signal: ctl.signal });
+    clearTimeout(tm);
+  } catch { return brezPovezave(route, data); }
+  if (r.status >= 502 && r.status <= 504) return brezPovezave(route, data); // strežnik ali posrednik ne dosegljiv
   let j; try { j = await r.json(); } catch { j = { ok: false, message: 'Napaka strežnika' }; }
-  if (r.status === 401 && route !== 'auth/login') { S.me = null; renderLogin(); throw new Error('unauth'); }
+  if (r.status === 401 && route !== 'auth/login') { offClear(); S.me = null; renderLogin(); throw new Error('unauth'); }
+  if (S.offlineAt) setOffline(null);
   if (!j.ok) { const e = new Error(j.message || 'Napaka'); e.data = j; throw e; }
+  if (BRANJE.has(route)) offSave(route, data, j);
   return j;
 }
 function toast(msg, err = false) {
@@ -69,8 +118,31 @@ function debounce(fn, ms = 300) { let t; return (...a) => { clearTimeout(t); t =
 
 /* ---------------- prijava in ogrodje ---------------- */
 async function boot() {
-  try { const me = await api('auth/me'); S.me = me; window.addEventListener('hashchange', route); route(); }
+  let odjava = false; try { odjava = localStorage.getItem('tm_odjava') === '1'; } catch { }
+  if (odjava) {
+    // 401 pomeni, da seje na strežniku tako ali tako ni več: zastavica ni več potrebna.
+    try { await api('auth/logout'); localStorage.removeItem('tm_odjava'); }
+    catch (e) { if (e.message === 'unauth') try { localStorage.removeItem('tm_odjava'); } catch { } }
+    return renderLogin();
+  }
+  try {
+    const me = await api('auth/me'); S.me = me;
+    window.removeEventListener('hashchange', route); window.addEventListener('hashchange', route); route();
+    if (!me._iz) setTimeout(predpomni, 3000);
+  }
   catch (e) { if (e.message !== 'unauth') renderLogin(); }
+}
+/* Ob zagonu z omrežjem naloži današnji dan, naročila, meni in mize, da ima
+   naprava za branje brez povezave vse glavne poglede, ne samo tistega, ki je
+   bil odprt. Rezervacije za naslednji teden pridejo zraven. */
+async function predpomni() {
+  const d = today();
+  // Telesa morajo biti enaka kot v pogledih (ključ je pot + telo).
+  const dnevi = [0, 1, 2, 3, 4, 5, 6].map(n => ['day', { date: addDays(d, n) }]); // časovnica do 7 dni
+  for (const [r, b] of [['orders', { date: d }], ...dnevi, ['menu', {}], ['tables', {}], ['reservations/list', { from: d, to: addDays(d, 30), q: '' }]]) {
+    if (offLoad(r, b) && Date.now() - offLoad(r, b).t < 60000) continue;
+    try { await api(r, b); } catch { return; }
+  }
 }
 function renderLogin() {
   stopPolling();
@@ -83,7 +155,7 @@ function renderLogin() {
     <button class="btn primary">Prijava</button></form></div>`;
   $('#lf').onsubmit = async e => {
     e.preventDefault();
-    try { await api('auth/login', Object.fromEntries(new FormData(e.target))); boot(); }
+    try { await api('auth/login', Object.fromEntries(new FormData(e.target))); try { localStorage.removeItem('tm_odjava'); } catch { } boot(); }
     catch (err) { $('#lerr').innerHTML = `<div class="alert">${esc(err.message)}</div>`; }
   };
 }
@@ -92,7 +164,12 @@ const NAV = [
   ['pregled', 'Dan', 'Pregled dneva', 1], ['rezervacije', 'Rezervacije', 'Rezervacije', 1], ['narocila', 'Naročila', 'Naročila za prevzem', 1],
   ['tloris', 'Tloris', 'Tloris miz', 0], ['meni', 'Meni', 'Meni', 0], ['nastavitve', 'Nastavitve', 'Nastavitve', 0],
 ];
-async function doLogout() { await api('auth/logout'); location.hash = ''; renderLogin(); }
+async function doLogout() {
+  // Shranjene podatke pobrišemo tudi, če strežnik ni dosegljiv: po odjavi na napravi ne sme ostati nič.
+  // Sejo na strežniku pa zapremo ob prvi povezavi (zastavica), sicer bi bil po vrnitvi omrežja spet prijavljen.
+  try { await api('auth/logout'); localStorage.removeItem('tm_odjava'); } catch { try { localStorage.setItem('tm_odjava', '1'); } catch { } }
+  offClear(); S.me = null; location.hash = ''; renderLogin();
+}
 function shell() {
   if (!$('.shell')) {
     $('#app').innerHTML = `<div class="shell"><nav class="rail" aria-label="Glavna navigacija"><div class="brand" title="${esc(S.me.restaurant.name)}">${LOGO}</div>
@@ -123,7 +200,12 @@ function route() {
   if (!NAV.find(n => n[0] === S.view)) S.view = 'pregled';
   if (S.view !== 'narocila') stopPolling();
   shell();
-  ({ pregled: viewDay, rezervacije: viewList, narocila: viewOrders, tloris: viewEditor, meni: viewMenu, nastavitve: viewSettings })[S.view]();
+  const pogled = ({ pregled: viewDay, rezervacije: viewList, narocila: viewOrders, tloris: viewEditor, meni: viewMenu, nastavitve: viewSettings })[S.view];
+  Promise.resolve().then(pogled).catch(e => {
+    // Brez povezave pogled brez shranjenih podatkov (npr. Nastavitve) pove, zakaj je prazen.
+    if (e.message === 'unauth') return;
+    const m = $('#main'); if (m) m.innerHTML = `<div class="card pad stack"><h3>${esc(NAV.find(n => n[0] === S.view)[2])}</h3><div class="alert">${esc(e.message)}</div></div>`;
+  });
   startBadgePoll();
 }
 
@@ -245,7 +327,7 @@ function syncTabs() {
 }
 async function loadDay() {
   S.day = await api('day', { date: S.date });
-  S.dayAt = new Date();
+  S.dayAt = S.day._iz ? new Date(S.day._iz) : new Date();
   markSeen(S.day.reservations);
   startDayPoll();
   const hrs = S.day.hours.length ? S.day.hours : [['12:00', '22:00']];
@@ -309,14 +391,14 @@ function startDayPoll() {
       if (S.view !== 'pregled' || d.date !== S.date) return;
       // Obvestilo da globalni števec (reservations/new); tu samo osvežimo.
       markSeen(d.reservations);
-      S.day = d; S.dayAt = new Date();
-      drawPlan(); drawList(); loadTimeline(); drawStale(false);
+      S.day = d; S.dayAt = d._iz ? new Date(d._iz) : new Date();
+      drawPlan(); drawList(); loadTimeline(); drawStale(!!d._iz);
     } catch (e) { if (e.message !== 'unauth') drawStale(true); }
   }, 20000);
 }
 function drawStale(stale) {
   const el = $('#stale'); if (!el) return;
-  el.hidden = !stale;
+  el.hidden = !stale || !!S.offlineAt; // brez povezave to pove pas na vrhu (#offbar)
   if (stale && S.dayAt) el.textContent = `Ni povezave. Prikazano stanje je od ${S.dayAt.toTimeString().slice(0, 5)}.`;
 }
 function scrollToRes(id) { const el = $(`.ritem[data-rid="${id}"]`); el && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
@@ -876,12 +958,14 @@ async function viewSettings() {
   const j = await api('settings');
   const st = j.settings, hours = j.hours, sp = j.special_days;
   const apiBase = location.href.replace(/[#?].*$/, '').replace(/index\.php$/, '').replace(/\/?$/, '/') + 'api.php?r=ai/';
+  const appCard = namestitevHTML();
   const hourRows = kind => [1, 2, 3, 4, 5, 6, 7].map(d => {
     const hs = hours.filter(h => h.kind === kind && +h.weekday === d);
     return `<tr data-kind="${kind}" data-day="${d}"><td><b>${DAYS[d]}</b></td><td class="ints">${hs.map(h => intHTML(kind, h)).join('') || '<span class="muted small closed">Zaprto</span>'}</td><td><button class="btn sm" data-addint>+ Interval</button></td></tr>`;
   }).join('');
   m.innerHTML = `<div class="top"><h2 class="grow">Nastavitve</h2><button class="btn primary" id="ssave">Shrani nastavitve</button></div>
   <div class="stack">
+    ${appCard}
     <div class="card pad stack"><h3>Restavracija</h3><div class="grid3"><label>Ime<input id="r_name" value="${esc(j.restaurant.name)}"></label><label>Telefon<input id="r_phone" value="${esc(j.restaurant.phone || '')}"></label><label>Naslov<input id="r_address" value="${esc(j.restaurant.address || '')}"></label></div></div>
     <div class="stack">
       <div class="card pad stack"><h3>Delovni čas za goste</h3><p class="muted small">Zadnja rezervacija: najkasnejša ura, ko Tatjana še sprejme rezervacijo.</p><table class="simple">${hourRows('dine')}</table></div>
@@ -900,6 +984,7 @@ async function viewSettings() {
       <div><div class="small muted">API ključ (glava X-Api-Key)</div><code class="key" id="akey">${esc(j.restaurant.api_key)}</code></div>
       <div class="row"><button class="btn sm" id="copyk">Kopiraj ključ</button><button class="btn sm danger" id="newk">Ustvari nov ključ</button></div></div>
   </div>`;
+  wireNamestitev();
   const wire = () => {
     $$('[data-addint]').forEach(b => b.onclick = () => { const tr = b.closest('tr'); $('.closed', tr)?.remove(); $('.ints', tr).insertAdjacentHTML('beforeend', intHTML(tr.dataset.kind, { open_time: '12:00', close_time: '22:00', last_booking: tr.dataset.kind === 'dine' ? '20:30' : '' })); wire(); });
     $$('[data-rmint]').forEach(b => b.onclick = () => { b.closest('.int').remove(); });
@@ -928,6 +1013,31 @@ function intHTML(kind, h) {
   return `<div class="int row" data-kind="${kind}" style="margin:3px 0"><input type="time" data-k="open" value="${h.open_time}" style="width:110px"> do <input type="time" data-k="close" value="${h.close_time}" style="width:110px">${kind === 'dine' ? ` <span class="small muted">zadnja</span> <input type="time" data-k="last" value="${h.last_booking || ''}" style="width:110px">` : ''}<button class="btn sm ghost danger" data-rmint>${ic('x')}</button></div>`;
 }
 function durRow(d) { return `<tr data-dur><td><input type="number" data-k="max_party" value="${d.max_party}" style="width:90px"></td><td><input type="number" data-k="minutes" step="15" value="${d.minutes}" style="width:90px"></td><td><button class="btn sm ghost danger" data-rmrow>${ic('x')}</button></td></tr>`; }
+/* ---------------- namestitev kot aplikacija (PWA) ---------------- */
+let namestitev = null; // dogodek brskalnika (Android, Chrome, Edge) za gumb Namesti
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); namestitev = e; if ($('#appcard')) $('#appcard').outerHTML = namestitevHTML(), wireNamestitev(); });
+window.addEventListener('appinstalled', () => { namestitev = null; toast('Aplikacija je nameščena'); });
+const jeNamescena = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const jeIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function namestitevHTML() {
+  let h;
+  if (jeNamescena()) h = '<p class="muted small">Aplikacija je nameščena na tej napravi. Brez povezave pokaže zadnje prebrane podatke.</p>';
+  else if (namestitev) h = '<p class="muted small">Namesti Tatjana Miza na to napravo: odpira se kot aplikacija, z ikono na začetnem zaslonu.</p><div><button class="btn primary" id="appinst">Namesti aplikacijo</button></div>';
+  else if (jeIOS()) h = '<p class="muted small">Na iPhonu ali iPadu odpri to stran v <b>Safariju</b>, tapni <b>Deli</b> (kvadrat s puščico) in izberi <b>Dodaj na začetni zaslon</b>.</p>';
+  else h = '<p class="muted small">V meniju brskalnika izberi <b>Namesti aplikacijo</b> ali <b>Dodaj na začetni zaslon</b>. Na Androidu deluje v Chromu.</p>';
+  return `<div class="card pad stack" id="appcard"><h3>Aplikacija na tablici ali telefonu</h3>${h}</div>`;
+}
+function wireNamestitev() {
+  const b = $('#appinst'); if (!b) return;
+  b.onclick = async () => { const p = namestitev; namestitev = null; await p.prompt(); try { await p.userChoice; } catch { } if ($('#appcard')) $('#appcard').outerHTML = namestitevHTML(); };
+}
+/* Lupina aplikacije za odpiranje brez omrežja (sw.js). Brskalnik zahteva HTTPS ali localhost. */
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { }));
+}
+window.addEventListener('offline', () => { if (!S.offlineAt) setOffline(true); });
+window.addEventListener('online', () => { if (S.me) route(); else boot(); });
+
 function spRow(d) { return `<tr data-sp><td><input type="date" data-k="day" value="${d.day}"></td><td><input type="checkbox" data-k="closed" ${+d.closed ? 'checked' : ''}></td><td><input data-k="note" value="${esc(d.note || '')}" placeholder="npr. božič"></td><td><button class="btn sm ghost danger" data-rmrow>${ic('x')}</button></td></tr>`; }
 
 boot();

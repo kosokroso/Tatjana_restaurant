@@ -356,3 +356,12 @@ code.key{background:var(--sunk);padding:7px 10px;border-radius:6px;font:12.5px v
   .ib{width:44px;height:44px}
   input,select,textarea{min-height:44px;font-size:16px}
 }
+
+/* Brez povezave (PWA): pas na vrhu in zaklenjeni gumbi za spreminjanje. */
+#offbar{position:sticky;top:0;z-index:70;background:#7d1f10;color:#fff;padding:8px 14px;padding-top:calc(8px + env(safe-area-inset-top));font-size:13.5px;font-weight:500;text-align:center}
+body.offline .btn.primary,body.offline .btn.danger{opacity:.45;pointer-events:none}
+/* Pas je lepljiv; stranska vrstica in seznam se zamakneta za njegovo višino (--offh nastavi app.js). */
+@media (min-width:900px){
+  body.offline .rail{top:var(--offh,38px);height:calc(100vh - var(--offh,38px))}
+  body.offline .list{top:calc(var(--offh,38px) + 12px);max-height:calc(100vh - var(--offh,38px) - 24px)}
+}
